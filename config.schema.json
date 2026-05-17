@@ -6,42 +6,13 @@
   "schema": {
     "type": "object",
     "properties": {
-      "name": {
-        "title": "플랫폼 이름",
-        "type": "string",
-        "default": "SmartThings KM81",
-        "required": true
-      },
-      "clientId": {
-        "title": "SmartThings Client ID",
-        "type": "string",
-        "description": "SmartThings Developer Workspace에서 발급받은 Client ID (SmartThings 기반 장치를 사용할 때만 필수)"
-      },
-      "clientSecret": {
-        "title": "SmartThings Client Secret",
-        "type": "string"
-      },
-      "redirectUri": {
-        "title": "Redirect URI",
-        "type": "string",
-        "default": "https://myhome.example.com",
-        "description": "SmartThings에 등록한 https Redirect URI (포트 없이 도메인만, 예: https://myhome.example.com). 외부 443 포트가 리버스 프록시를 거쳐 내부 http://<homebridge_ip>:8999 로 전달되어야 합니다."
-      },
-      "temperatureMin": {
-        "title": "기본 목표온도 최소값(℃) — SmartAC 공용",
-        "type": "number",
-        "default": 18
-      },
-      "temperatureMax": {
-        "title": "기본 목표온도 최대값(℃) — SmartAC 공용",
-        "type": "number",
-        "default": 30
-      },
-      "temperatureStep": {
-        "title": "기본 목표온도 스텝(℃) — SmartAC 공용",
-        "type": "number",
-        "default": 1
-      },
+      "name": { "title": "플랫폼 이름", "type": "string", "default": "SmartThings KM81", "required": true },
+      "clientId": { "title": "SmartThings Client ID", "type": "string", "description": "SmartThings Developer Workspace에서 발급받은 Client ID (SmartThings 기반 장치를 사용할 때만 필수)" },
+      "clientSecret": { "title": "SmartThings Client Secret", "type": "string" },
+      "redirectUri": { "title": "Redirect URI", "type": "string", "default": "https://myhome.example.com", "description": "SmartThings에 등록한 https Redirect URI (포트 없이 도메인만, 예: https://myhome.example.com). 외부 443 포트가 리버스 프록시를 거쳐 내부 http://<homebridge_ip>:8999 로 전달되어야 합니다." },
+      "temperatureMin": { "title": "기본 목표온도 최소값(℃) — SmartAC 공용", "type": "number", "default": 18 },
+      "temperatureMax": { "title": "기본 목표온도 최대값(℃) — SmartAC 공용", "type": "number", "default": 30 },
+      "temperatureStep": { "title": "기본 목표온도 스텝(℃) — SmartAC 공용", "type": "number", "default": 1 },
       "devices": {
         "type": "array",
         "title": "장치 목록",
@@ -86,26 +57,62 @@
             "maxTemp": { "title": "[구형 AC] 최고 설정 온도 (°C)", "type": "integer", "default": 30 },
             "manufacturer": { "title": "[구형 AC] 제조사", "type": "string", "default": "Samsung" },
 
-            "hkCoolEnabled": { "title": "[구형 AC] HomeKit 냉방(Cool) 활성화", "type": "boolean", "default": true },
-            "hkCoolModes": { "title": "[구형 AC] HomeKit 냉방 → 실제 AC modes", "type": "array", "items": { "type": "string" }, "default": ["Cool"], "description": "예: [\"Cool\"], [\"CoolClean\"], [\"DryClean\"]. 비우면 모드 전송 안 함." },
-            "hkCoolOptions": { "title": "[구형 AC] HomeKit 냉방 → 추가 options", "type": "array", "items": { "type": "string" }, "default": [], "description": "예: [\"Comode_Nano\"] (무풍), [\"Autoclean_On\"]" },
-            "hkHeatEnabled": { "title": "[구형 AC] HomeKit 난방(Heat) 활성화", "type": "boolean", "default": false },
-            "hkHeatModes": { "title": "[구형 AC] HomeKit 난방 → 실제 AC modes", "type": "array", "items": { "type": "string" }, "default": [] },
-            "hkHeatOptions": { "title": "[구형 AC] HomeKit 난방 → 추가 options", "type": "array", "items": { "type": "string" }, "default": [] },
-            "hkAutoEnabled": { "title": "[구형 AC] HomeKit 자동(Auto) 활성화", "type": "boolean", "default": false },
-            "hkAutoModes": { "title": "[구형 AC] HomeKit 자동 → 실제 AC modes", "type": "array", "items": { "type": "string" }, "default": [] },
-            "hkAutoOptions": { "title": "[구형 AC] HomeKit 자동 → 추가 options", "type": "array", "items": { "type": "string" }, "default": [] },
-            "powerOnHkMode": {
-              "title": "[구형 AC] 전원 ON 시 자동 적용할 HomeKit 모드",
-              "type": "string",
-              "default": "none",
+            "hkCoolMode": {
+              "title": "[구형 AC] HomeKit '냉방' 누르면 실제 AC 모드",
+              "type": "string", "default": "Cool",
               "oneOf": [
-                { "title": "사용 안 함 (마지막 모드 유지)", "enum": ["none"] },
-                { "title": "냉방(Cool)", "enum": ["cool"] },
-                { "title": "난방(Heat)", "enum": ["heat"] },
-                { "title": "자동(Auto)", "enum": ["auto"] }
+                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
+                { "title": "냉방 (Cool)", "enum": ["Cool"] },
+                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
+                { "title": "제습 (Dry)", "enum": ["Dry"] },
+                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
+                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
+                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
               ]
             },
+            "hkCoolWithWindFree": { "title": "[구형 AC] HomeKit 냉방 시 무풍(Comode_Nano) 같이 켜기", "type": "boolean", "default": false },
+            "hkHeatMode": {
+              "title": "[구형 AC] HomeKit '난방' 누르면 실제 AC 모드",
+              "type": "string", "default": "none",
+              "oneOf": [
+                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
+                { "title": "냉방 (Cool)", "enum": ["Cool"] },
+                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
+                { "title": "제습 (Dry)", "enum": ["Dry"] },
+                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
+                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
+                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+              ]
+            },
+            "hkHeatWithWindFree": { "title": "[구형 AC] HomeKit 난방 시 무풍 같이 켜기", "type": "boolean", "default": false },
+            "hkAutoMode": {
+              "title": "[구형 AC] HomeKit '자동' 누르면 실제 AC 모드",
+              "type": "string", "default": "none",
+              "oneOf": [
+                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
+                { "title": "냉방 (Cool)", "enum": ["Cool"] },
+                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
+                { "title": "제습 (Dry)", "enum": ["Dry"] },
+                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
+                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
+                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+              ]
+            },
+            "hkAutoWithWindFree": { "title": "[구형 AC] HomeKit 자동 시 무풍 같이 켜기", "type": "boolean", "default": false },
+            "powerOnMode": {
+              "title": "[구형 AC] 전원 ON 시 자동 적용할 모드",
+              "type": "string", "default": "none",
+              "oneOf": [
+                { "title": "사용 안 함 (마지막 모드 유지)", "enum": ["none"] },
+                { "title": "냉방 (Cool)", "enum": ["Cool"] },
+                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
+                { "title": "제습 (Dry)", "enum": ["Dry"] },
+                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
+                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
+                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+              ]
+            },
+            "powerOnWithWindFree": { "title": "[구형 AC] 전원 ON 시 무풍 같이 켜기", "type": "boolean", "default": false },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -113,8 +120,7 @@
 
             "coolModeCommand": {
               "title": "[신형 AC] HomeKit '냉방(COOL)' 전송 모드",
-              "type": "string",
-              "default": "dry",
+              "type": "string", "default": "dry",
               "oneOf": [
                 { "title": "제습(Dry)로 명령", "enum": ["dry"] },
                 { "title": "냉방(Cool)로 명령", "enum": ["cool"] }
@@ -122,8 +128,7 @@
             },
             "swingBinding": {
               "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
-              "type": "string",
-              "default": "windFree",
+              "type": "string", "default": "windFree",
               "oneOf": [
                 { "title": "무풍(WindFree)", "enum": ["windFree"] },
                 { "title": "사용 안 함", "enum": ["none"] }
@@ -131,8 +136,7 @@
             },
             "lockBinding": {
               "title": "[신형 AC] 어린이 보호용 잠금장치 ↔ 기능",
-              "type": "string",
-              "default": "autoClean",
+              "type": "string", "default": "autoClean",
               "oneOf": [
                 { "title": "자동건조(Auto Clean)", "enum": ["autoClean"] },
                 { "title": "사용 안 함", "enum": ["none"] }
@@ -161,20 +165,16 @@
     {
       "type": "fieldset",
       "title": "SmartThings 인증 (신형 AC / 세탁기 / 건조기 사용 시 필수)",
-      "expandable": true,
-      "expanded": false,
+      "expandable": true, "expanded": false,
       "items": [
         { "type": "help", "help": "1) SmartThings CLI(<code>npm i -g @smartthings/cli</code>) + <code>smartthings apps:create</code> 로 OAuth-In 앱 생성<br>2) Scope: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>3) Redirect URI는 <b>https 도메인만</b> (포트 X). 예: <code>https://myhome.example.com</code><br>4) 외부 443 → 내부 <code>&lt;homebridge_ip&gt;:8999</code> 로 리버스 프록시 필요<br>5) 토큰 파일: <code>smartthings_km81_token.json</code> (통합)" },
-        "clientId",
-        "clientSecret",
-        "redirectUri"
+        "clientId", "clientSecret", "redirectUri"
       ]
     },
     {
       "type": "fieldset",
       "title": "SmartAC 공용 기본값 (개별 장치에서 덮어쓸 수 있음)",
-      "expandable": true,
-      "expanded": false,
+      "expandable": true, "expanded": false,
       "items": ["temperatureMin", "temperatureMax", "temperatureStep"]
     },
     {
@@ -184,7 +184,7 @@
       "startEmpty": true,
       "orderable": true,
       "addButtonText": "장치 추가",
-      "arrayItemCardTitle": "deviceLabel || name || deviceType",
+      "arrayItemCardTitle": "{{name}}{{deviceLabel}} ({{deviceType}})",
       "items": [
         "devices[].deviceType",
 
@@ -205,18 +205,24 @@
         { "key": "devices[].debug",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
         { "type": "help",
-          "help": "<b>HomeKit 모드 ↔ 실제 AC 모드 매핑</b><br>HomeKit의 냉방/난방/자동 버튼을 누를 때 어떤 모드 명령을 보낼지 지정합니다.<br>사용 가능한 modes 문자열 예: <code>Cool</code>, <code>Dry</code>, <code>Wind</code>, <code>Auto</code>, <code>CoolClean</code>, <code>DryClean</code> 등.<br>options 예: <code>Comode_Nano</code>(무풍), <code>Autoclean_On</code>(자동건조).<br>각 modes/options 배열은 비워두면 모드 명령을 보내지 않습니다.",
+          "help": "<b>HomeKit 모드 ↔ 실제 AC 모드 매핑</b><br>HomeKit의 냉방/난방/자동 버튼을 누를 때 어떤 모드 명령을 보낼지 드롭다운에서 선택합니다.<br>'사용 안 함'을 선택하면 해당 버튼이 HomeKit에서 숨겨집니다.",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkCoolEnabled",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkCoolModes",     "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkCoolEnabled !== false;" } },
-        { "key": "devices[].hkCoolOptions",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkCoolEnabled !== false;" } },
-        { "key": "devices[].hkHeatEnabled",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkHeatModes",     "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkHeatEnabled === true;" } },
-        { "key": "devices[].hkHeatOptions",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkHeatEnabled === true;" } },
-        { "key": "devices[].hkAutoEnabled",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkAutoModes",     "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkAutoEnabled === true;" } },
-        { "key": "devices[].hkAutoOptions",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkAutoEnabled === true;" } },
-        { "key": "devices[].powerOnHkMode",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].hkCoolMode",          "type": "select",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].hkCoolWithWindFree",  "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkCoolMode && model.devices[arrayIndices[0]].hkCoolMode !== 'none';" } },
+        { "key": "devices[].hkHeatMode",          "type": "select",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].hkHeatWithWindFree",  "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkHeatMode && model.devices[arrayIndices[0]].hkHeatMode !== 'none';" } },
+        { "key": "devices[].hkAutoMode",          "type": "select",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].hkAutoWithWindFree",  "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkAutoMode && model.devices[arrayIndices[0]].hkAutoMode !== 'none';" } },
+        { "key": "devices[].powerOnMode",         "type": "select",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].powerOnWithWindFree", "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].powerOnMode && model.devices[arrayIndices[0]].powerOnMode !== 'none';" } },
 
         { "key": "devices[].deviceLabel",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
