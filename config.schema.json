@@ -24,8 +24,8 @@
       "redirectUri": {
         "title": "Redirect URI",
         "type": "string",
-        "default": "http://localhost:8999/oauth/callback",
-        "description": "SmartThings에 등록한 https Redirect URI. 내부적으로 8999 포트에서 콜백을 수신합니다."
+        "default": "https://myhome.example.com",
+        "description": "SmartThings에 등록한 https Redirect URI (포트 없이 도메인만, 예: https://myhome.example.com). 외부 443 포트가 리버스 프록시를 거쳐 내부 http://<homebridge_ip>:8999 로 전달되어야 합니다."
       },
       "temperatureMin": {
         "title": "기본 목표온도 최소값(℃) — SmartAC 공용",
@@ -86,12 +86,12 @@
               "type": "integer"
             },
             "swingModeType": {
-              "title": "[구형 AC] 스윈(회전) 모드 타입",
+              "title": "[구형 AC] 스윙(회전) 모드 기능",
               "type": "string",
               "default": "comfort",
               "oneOf": [
-                { "title": "쿠적(Comfort/무풍)", "enum": ["comfort"] },
-                { "title": "바람(Wind/상하 스윈)", "enum": ["wind"] }
+                { "title": "Comfort/무풍", "enum": ["comfort"] },
+                { "title": "Wind/상하 바람", "enum": ["wind"] }
               ]
             },
             "pollingInterval": {
@@ -162,7 +162,7 @@
               ]
             },
             "swingBinding": {
-              "title": "[신형 AC] 스윈(Swing) 토글 ↔ 기능",
+              "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
               "type": "string",
               "default": "windFree",
               "oneOf": [
@@ -250,7 +250,7 @@
       "expandable": true,
       "expanded": false,
       "items": [
-        { "type": "help", "help": "1) SmartThings Developer Workspace에서 OAuth 앱 생성<br>2) Scope: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>3) Redirect URI는 https 필수 (리버스 프록시 권장)<br>4) 토큰 파일: <code>smartthings_km81_token.json</code> (통합)" },
+        { "type": "help", "help": "1) SmartThings CLI(<code>npm i -g @smartthings/cli</code>) + <code>smartthings apps:create</code> 로 OAuth-In 앱 생성<br>2) Scope: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>3) Redirect URI는 <b>https 도메인만</b> (포트 X). 예: <code>https://myhome.example.com</code><br>4) 외부 443 → 내부 <code>&lt;homebridge_ip&gt;:8999</code> 로 리버스 프록시 필요<br>5) 토큰 파일: <code>smartthings_km81_token.json</code> (통합)" },
         "clientId",
         "clientSecret",
         "redirectUri"
@@ -258,7 +258,7 @@
     },
     {
       "type": "fieldset",
-      "title": "SmartAC 공용 기본값 (개별 장치에서 덮어씁 수 있음)",
+      "title": "SmartAC 공용 기본값 (개별 장치에서 덮어쓸 수 있음)",
       "expandable": true,
       "expanded": false,
       "items": ["temperatureMin", "temperatureMax", "temperatureStep"]
@@ -339,7 +339,7 @@
         { "key": "devices[].triggerMode",
           "type": "checkboxes",
           "titleMap": {
-            "onCompletion": "운전 종료 시 펀스 알림 (약 10초 활성 후 자동 해제)",
+            "onCompletion": "운전 종료 시 펄스 알림 (약 10초 활성 후 자동 해제)",
             "duringRun":    "운전 중 활성 상태 유지"
           },
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
