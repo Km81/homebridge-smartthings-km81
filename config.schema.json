@@ -52,7 +52,6 @@
               "title": "[구형 AC] HomeKit '냉방(COOL)' 전송 모드",
               "type": "string",
               "default": "Cool",
-              "required": true,
               "oneOf": [
                 { "title": "냉방 (Cool) 명령", "enum": ["Cool"] },
                 { "title": "냉방청정 (CoolClean) 명령", "enum": ["CoolClean"] },
@@ -65,7 +64,6 @@
               "title": "[구형 AC] 스윙(Swing) 토글 ↔ 기능",
               "type": "string",
               "default": "comfort",
-              "required": true,
               "oneOf": [
                 { "title": "무풍 (Comfort)", "enum": ["comfort"] },
                 { "title": "상하 바람 (Wind)", "enum": ["wind"] },
@@ -77,7 +75,6 @@
               "title": "[구형 AC] 어린이 보호용 잠금장치 ↔ 기능",
               "type": "string",
               "default": "autoClean",
-              "required": true,
               "oneOf": [
                 { "title": "자동건조 (AutoClean)", "enum": ["autoClean"] },
                 { "title": "사용 안 함", "enum": ["none"] }
@@ -93,7 +90,6 @@
               "title": "[신형 AC] HomeKit '냉방(COOL)' 전송 모드",
               "type": "string",
               "default": "cool",
-              "required": true,
               "oneOf": [
                 { "title": "냉방 (Cool) 명령", "enum": ["cool"] },
                 { "title": "냉방청정 (CoolClean) 명령", "enum": ["coolClean"] },
@@ -105,7 +101,6 @@
               "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
               "type": "string",
               "default": "windFree",
-              "required": true,
               "oneOf": [
                 { "title": "무풍 (WindFree)", "enum": ["windFree"] },
                 { "title": "사용 안 함", "enum": ["none"] }
@@ -115,7 +110,6 @@
               "title": "[신형 AC] 어린이 보호용 잠금장치 ↔ 기능",
               "type": "string",
               "default": "autoClean",
-              "required": true,
               "oneOf": [
                 { "title": "자동건조 (Auto Clean)", "enum": ["autoClean"] },
                 { "title": "사용 안 함", "enum": ["none"] }
@@ -252,27 +246,17 @@
         { "key": "devices[].sensorPollInterval",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
 
-        {
-          "type": "fieldset",
-          "title": "온도 설정 (선택)",
-          "expandable": true, "expanded": false,
-          "items": [
-            { "key": "devices[].minTemp" },
-            { "key": "devices[].maxTemp" }
-          ],
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" }
-        },
-        {
-          "type": "fieldset",
-          "title": "온도 설정 (선택)",
-          "expandable": true, "expanded": false,
-          "items": [
-            { "key": "devices[].temperatureMin" },
-            { "key": "devices[].temperatureMax" },
-            { "key": "devices[].temperatureStep" }
-          ],
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" }
-        }
+        { "key": "devices[].minTemp",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].maxTemp",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+
+        { "key": "devices[].temperatureMin",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].temperatureMax",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].temperatureStep",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } }
       ]
     }
   ]
