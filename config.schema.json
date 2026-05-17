@@ -58,56 +58,17 @@
             "manufacturer": { "title": "[구형 AC] 제조사", "type": "string", "default": "Samsung" },
 
             "hkCoolMode": {
-              "title": "[구형 AC] HomeKit '냉방' 누르면 실제 AC 모드",
+              "title": "[구형 AC] HomeKit '냉방(COOL)' 전송 모드",
               "type": "string", "default": "Cool",
               "oneOf": [
-                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
                 { "title": "냉방 (Cool)", "enum": ["Cool"] },
                 { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
                 { "title": "제습 (Dry)", "enum": ["Dry"] },
                 { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
                 { "title": "공기청정 (Wind)", "enum": ["Wind"] },
                 { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
-              ]
-            },
-            "hkHeatMode": {
-              "title": "[구형 AC] HomeKit '난방' 누르면 실제 AC 모드",
-              "type": "string", "default": "none",
-              "oneOf": [
-                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
-                { "title": "냉방 (Cool)", "enum": ["Cool"] },
-                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
-                { "title": "제습 (Dry)", "enum": ["Dry"] },
-                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
-                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
-              ]
-            },
-            "hkAutoMode": {
-              "title": "[구형 AC] HomeKit '자동' 누르면 실제 AC 모드",
-              "type": "string", "default": "none",
-              "oneOf": [
-                { "title": "사용 안 함 (HomeKit에서 숨김)", "enum": ["none"] },
-                { "title": "냉방 (Cool)", "enum": ["Cool"] },
-                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
-                { "title": "제습 (Dry)", "enum": ["Dry"] },
-                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
-                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
-              ]
-            },
-            "powerOnMode": {
-              "title": "[구형 AC] 전원 ON 시 자동 적용할 모드",
-              "type": "string", "default": "none",
-              "oneOf": [
-                { "title": "사용 안 함 (마지막 모드 유지)", "enum": ["none"] },
-                { "title": "냉방 (Cool)", "enum": ["Cool"] },
-                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
-                { "title": "제습 (Dry)", "enum": ["Dry"] },
-                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
-                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
-              ]
+              ],
+              "description": "HomeKit에서 '냉방' 버튼을 누를 때 또는 모드 변경 시 실제 AC에 보낼 모드입니다."
             },
             "enableSwingMode": { "title": "[구형 AC] HomeKit 스윙(SwingMode) 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 타일에서 스윙 버튼이 사라집니다. 의도치 않은 무풍/스윙 토글 방지에 유용합니다." },
             "enableLockPhysicalControls": { "title": "[구형 AC] HomeKit 어린이 보호용 잠금장치 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 잠금 토글이 사라집니다 (자동건조 토글 매핑)." },
@@ -177,12 +138,9 @@
     },
     {
       "key": "devices",
-      "type": "array",
-      "title": "장치 목록",
-      "startEmpty": true,
-      "orderable": true,
-      "addButtonText": "장치 추가",
-      "arrayItemCardTitle": "{{name}}{{deviceLabel}} ({{deviceType}})",
+      "type": "tabarray",
+      "title": "{{ value.name || value.deviceLabel || ('Device ' + ($index + 1)) }}",
+      "expandable": false,
       "items": [
         "devices[].deviceType",
 
@@ -201,17 +159,7 @@
         { "key": "devices[].maxTemp",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].manufacturer",    "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].debug",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-
-        { "type": "help",
-          "help": "<b>HomeKit 모드 ↔ 실제 AC 모드 매핑</b><br>HomeKit의 냉방/난방/자동 버튼을 누를 때 어떤 모드 명령을 보낼지 드롭다운에서 선택합니다.<br>'사용 안 함'을 선택하면 해당 버튼이 HomeKit에서 숨겨집니다.",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkCoolMode",          "type": "select",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkHeatMode",          "type": "select",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkAutoMode",          "type": "select",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].powerOnMode",         "type": "select",
+        { "key": "devices[].hkCoolMode",      "type": "select",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].enableSwingMode", "type": "checkbox",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
