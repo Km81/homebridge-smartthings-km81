@@ -70,7 +70,6 @@
                 { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
-            "hkCoolWithWindFree": { "title": "[구형 AC] HomeKit 냉방 시 무풍(Comode_Nano) 같이 켜기", "type": "boolean", "default": false },
             "hkHeatMode": {
               "title": "[구형 AC] HomeKit '난방' 누르면 실제 AC 모드",
               "type": "string", "default": "none",
@@ -84,7 +83,6 @@
                 { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
-            "hkHeatWithWindFree": { "title": "[구형 AC] HomeKit 난방 시 무풍 같이 켜기", "type": "boolean", "default": false },
             "hkAutoMode": {
               "title": "[구형 AC] HomeKit '자동' 누르면 실제 AC 모드",
               "type": "string", "default": "none",
@@ -98,7 +96,6 @@
                 { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
-            "hkAutoWithWindFree": { "title": "[구형 AC] HomeKit 자동 시 무풍 같이 켜기", "type": "boolean", "default": false },
             "powerOnMode": {
               "title": "[구형 AC] 전원 ON 시 자동 적용할 모드",
               "type": "string", "default": "none",
@@ -112,7 +109,6 @@
                 { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
-            "powerOnWithWindFree": { "title": "[구형 AC] 전원 ON 시 무풍 같이 켜기", "type": "boolean", "default": false },
             "enableSwingMode": { "title": "[구형 AC] HomeKit 스윙(SwingMode) 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 타일에서 스윙 버튼이 사라집니다. 의도치 않은 무풍/스윙 토글 방지에 유용합니다." },
             "enableLockPhysicalControls": { "title": "[구형 AC] HomeKit 어린이 보호용 잠금장치 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 잠금 토글이 사라집니다 (자동건조 토글 매핑)." },
 
@@ -211,20 +207,12 @@
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].hkCoolMode",          "type": "select",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkCoolWithWindFree",  "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkCoolMode && model.devices[arrayIndices[0]].hkCoolMode !== 'none';" } },
         { "key": "devices[].hkHeatMode",          "type": "select",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkHeatWithWindFree",  "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkHeatMode && model.devices[arrayIndices[0]].hkHeatMode !== 'none';" } },
         { "key": "devices[].hkAutoMode",          "type": "select",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkAutoWithWindFree",  "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].hkAutoMode && model.devices[arrayIndices[0]].hkAutoMode !== 'none';" } },
         { "key": "devices[].powerOnMode",         "type": "select",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].powerOnWithWindFree", "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].powerOnMode && model.devices[arrayIndices[0]].powerOnMode !== 'none';" } },
         { "key": "devices[].enableSwingMode", "type": "checkbox",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].enableLockPhysicalControls", "type": "checkbox",
