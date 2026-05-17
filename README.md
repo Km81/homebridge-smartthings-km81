@@ -235,7 +235,7 @@ Homebridge 재시작.
   - `motion` — `MotionSensor` (동작 감지)
   - `occupancy` — `OccupancySensor` (점유 감지)
 - `triggerMode` (배열, 다중 선택)
-  - `onCompletion` — 운전이 끝나는 순간 **약 10초간 활성** 후 자동으로 해제 (펀스)
+  - `onCompletion` — 운전이 끝나는 순간 **약 10초간 활성** 후 자동으로 해제 (펄스)
   - `duringRun` — 운전 중에는 계속 활성, 정지 시 비활성
 - `sensorPollInterval` (정수, 기본 30초, 최소 5초)
 
@@ -406,7 +406,7 @@ if __name__ == '__main__':
 | `Cool` | 냉방 |
 | `Dry` | 제습 |
 | `Wind` | 송풍 / 공기청정 |
-| `Auto` | 자동 (스마트 쿠적) |
+| `Auto` | 자동 (스마트 쾌적) |
 | `CoolClean` | 냉방청정 |
 | `DryClean` | 제습청정 |
 
