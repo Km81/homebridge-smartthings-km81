@@ -1,8 +1,8 @@
 name: Publish to npm
 
-# 두 가지 방식으로 트리거:
-# 1) 'v*' 태그를 push 하면 자동 publish (예: git tag v1.0.0 && git push --tags)
-# 2) Actions 탭에서 'Run workflow' 버튼으로 수동 실행 (dry-run 옵션 제공)
+# 트리거:
+# 1) 'v*' 태그 push (예: v1.0.0)
+# 2) Actions 탭에서 Run workflow (dry-run 옵션)
 on:
   push:
     tags:
@@ -12,14 +12,14 @@ on:
       dry_run:
         description: 'Dry run (npm publish --dry-run)'
         required: false
-        default: 'false'
+        type: boolean
+        default: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # npm provenance (선택, npm 9+ 권장)
     steps:
       - uses: actions/checkout@v4
 
@@ -29,8 +29,14 @@ jobs:
           node-version: '20.x'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Show npm/node versions
+        run: |
+          node --version
+          npm --version
+          npm whoami || echo "(whoami failed — 이상이 아님: token 인증은 publish 시점에 적용됨)"
+
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm install --no-audit --no-fund
 
       - name: Sanity check (syntax)
         run: |
@@ -40,6 +46,7 @@ jobs:
             node --check "$f"
           done
           node -e "JSON.parse(require('fs').readFileSync('config.schema.json','utf8'))"
+          echo "All syntax checks passed."
 
       - name: Verify package version matches tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -50,6 +57,7 @@ jobs:
             echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
             exit 1
           fi
+          echo "Version matches: $PKG_VERSION"
 
       - name: Publish to npm (dry-run)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
@@ -59,6 +67,6 @@ jobs:
 
       - name: Publish to npm
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
