@@ -179,7 +179,7 @@
         { "key": "devices[].serialNumber",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
 
-        { "key": "devices[].hkCoolMode", "type": "select",
+        { "key": "devices[].hkCoolMode", "type": "select", "required": true,
           "titleMap": [
             { "value": "Cool",      "name": "냉방 (Cool) 명령" },
             { "value": "CoolClean", "name": "냉방청정 (CoolClean) 명령" },
@@ -187,21 +187,21 @@
             { "value": "DryClean",  "name": "제습청정 (DryClean) 명령" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].legacySwingBinding", "type": "select",
+        { "key": "devices[].legacySwingBinding", "type": "select", "required": true,
           "titleMap": [
             { "value": "comfort", "name": "무풍 (Comfort)" },
             { "value": "wind",    "name": "상하 바람 (Wind)" },
             { "value": "none",    "name": "사용 안 함" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].legacyLockBinding", "type": "select",
+        { "key": "devices[].legacyLockBinding", "type": "select", "required": true,
           "titleMap": [
             { "value": "autoClean", "name": "자동건조 (AutoClean)" },
             { "value": "none",      "name": "사용 안 함" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
-        { "key": "devices[].coolModeCommand", "type": "select",
+        { "key": "devices[].coolModeCommand", "type": "select", "required": true,
           "titleMap": [
             { "value": "cool",      "name": "냉방 (Cool) 명령" },
             { "value": "coolClean", "name": "냉방청정 (CoolClean) 명령" },
@@ -209,13 +209,13 @@
             { "value": "dryClean",  "name": "제습청정 (DryClean) 명령" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].swingBinding", "type": "select",
+        { "key": "devices[].swingBinding", "type": "select", "required": true,
           "titleMap": [
             { "value": "windFree", "name": "무풍 (WindFree)" },
             { "value": "none",     "name": "사용 안 함" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].lockBinding", "type": "select",
+        { "key": "devices[].lockBinding", "type": "select", "required": true,
           "titleMap": [
             { "value": "autoClean", "name": "자동건조 (Auto Clean)" },
             { "value": "none",      "name": "사용 안 함" }
