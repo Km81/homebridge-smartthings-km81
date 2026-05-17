@@ -1,0 +1,351 @@
+{
+  "pluginAlias": "SmartThingsKM81",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Samsung 기기(구형 에어컨 / 신형 에어컨 / 세탁기·건조기)를 하나의 플랫폼으로 통합 관리합니다. SmartThings를 사용하는 장치(신형 AC / 세탁기 / 건조기)가 하나라도 있으면 Client ID/Secret/Redirect URI가 필요합니다.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "플랫폼 이름",
+        "type": "string",
+        "default": "SmartThings KM81",
+        "required": true
+      },
+      "clientId": {
+        "title": "SmartThings Client ID",
+        "type": "string",
+        "description": "SmartThings Developer Workspace에서 발급받은 Client ID (SmartThings 기반 장치를 사용할 때만 필수)"
+      },
+      "clientSecret": {
+        "title": "SmartThings Client Secret",
+        "type": "string"
+      },
+      "redirectUri": {
+        "title": "Redirect URI",
+        "type": "string",
+        "default": "http://localhost:8999/oauth/callback",
+        "description": "SmartThings에 등록한 https Redirect URI. 내부적으로 8999 포트에서 콜백을 수신합니다."
+      },
+      "temperatureMin": {
+        "title": "기본 목표온도 최소값(℃) — SmartAC 공용",
+        "type": "number",
+        "default": 18
+      },
+      "temperatureMax": {
+        "title": "기본 목표온도 최대값(℃) — SmartAC 공용",
+        "type": "number",
+        "default": 30
+      },
+      "temperatureStep": {
+        "title": "기본 목표온도 스텝(℃) — SmartAC 공용",
+        "type": "number",
+        "default": 1
+      },
+      "devices": {
+        "type": "array",
+        "title": "장치 목록",
+        "default": [],
+        "items": {
+          "type": "object",
+          "properties": {
+            "deviceType": {
+              "title": "장치 종류",
+              "type": "string",
+              "default": "smartAc",
+              "oneOf": [
+                { "title": "구형 에어컨 (Samsung Legacy, TLSv1 직접통신)", "enum": ["legacyAc"] },
+                { "title": "신형 에어컨 (SmartThings)", "enum": ["smartAc"] },
+                { "title": "세탁기 (SmartThings)", "enum": ["washer"] },
+                { "title": "건조기 (SmartThings)", "enum": ["dryer"] }
+              ],
+              "required": true
+            },
+
+            "name": {
+              "title": "[구형 AC] 액세서리 이름",
+              "type": "string",
+              "description": "홈 앱에 표시될 이름"
+            },
+            "ip": {
+              "title": "[구형 AC] 에어컨 IP 주소",
+              "type": "string",
+              "format": "ipv4"
+            },
+            "token": {
+              "title": "[구형 AC] 인증 토큰",
+              "type": "string"
+            },
+            "deviceIndex": {
+              "title": "[구형 AC] 장치 인덱스 (읽기)",
+              "type": "integer",
+              "default": 0
+            },
+            "setDeviceIndex": {
+              "title": "[구형 AC] 장치 인덱스 (쓰기)",
+              "type": "integer"
+            },
+            "swingModeType": {
+              "title": "[구형 AC] 스윈(회전) 모드 타입",
+              "type": "string",
+              "default": "comfort",
+              "oneOf": [
+                { "title": "쿠적(Comfort/무풍)", "enum": ["comfort"] },
+                { "title": "바람(Wind/상하 스윈)", "enum": ["wind"] }
+              ]
+            },
+            "pollingInterval": {
+              "title": "[구형 AC] 상태 폴링 간격 (초)",
+              "type": "integer"
+            },
+            "timeout": {
+              "title": "[구형 AC] 요청 시간 초과 (ms)",
+              "type": "integer",
+              "default": 5000
+            },
+            "cacheDuration": {
+              "title": "[구형 AC] 캐시 유지 시간 (ms)",
+              "type": "integer",
+              "default": 30000
+            },
+            "certPath": {
+              "title": "[구형 AC] 인증서 경로 (선택)",
+              "type": "string",
+              "description": "비워두면 패키지에 포함된 cert/cert.pem을 사용합니다."
+            },
+            "keyPath": {
+              "title": "[구형 AC] 키 파일 경로 (선택)",
+              "type": "string"
+            },
+            "debug": {
+              "title": "[구형 AC] 상세 로그",
+              "type": "boolean",
+              "default": false
+            },
+            "minTemp": {
+              "title": "[구형 AC] 최저 설정 온도 (°C)",
+              "type": "integer",
+              "default": 18
+            },
+            "maxTemp": {
+              "title": "[구형 AC] 최고 설정 온도 (°C)",
+              "type": "integer",
+              "default": 30
+            },
+            "manufacturer": {
+              "title": "[구형 AC] 제조사",
+              "type": "string",
+              "default": "Samsung"
+            },
+
+            "deviceLabel": {
+              "title": "[SmartThings] 장치 이름 (SmartThings 레이블)",
+              "type": "string",
+              "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다."
+            },
+            "model": {
+              "title": "모델명 (선택)",
+              "type": "string"
+            },
+            "serialNumber": {
+              "title": "일련번호 (선택)",
+              "type": "string"
+            },
+
+            "coolModeCommand": {
+              "title": "[신형 AC] HomeKit '냉방(COOL)' 전송 모드",
+              "type": "string",
+              "default": "dry",
+              "oneOf": [
+                { "title": "제습(Dry)로 명령", "enum": ["dry"] },
+                { "title": "냉방(Cool)로 명령", "enum": ["cool"] }
+              ]
+            },
+            "swingBinding": {
+              "title": "[신형 AC] 스윈(Swing) 토글 ↔ 기능",
+              "type": "string",
+              "default": "windFree",
+              "oneOf": [
+                { "title": "무풍(WindFree)", "enum": ["windFree"] },
+                { "title": "사용 안 함", "enum": ["none"] }
+              ]
+            },
+            "lockBinding": {
+              "title": "[신형 AC] 어린이 보호용 잠금장치 ↔ 기능",
+              "type": "string",
+              "default": "autoClean",
+              "oneOf": [
+                { "title": "자동건조(Auto Clean)", "enum": ["autoClean"] },
+                { "title": "사용 안 함", "enum": ["none"] }
+              ]
+            },
+            "exposeWindFreeSwitch": {
+              "title": "[신형 AC] 무풍 별도 스위치 노출",
+              "type": "boolean",
+              "default": false
+            },
+            "exposeAutoCleanSwitch": {
+              "title": "[신형 AC] 자동건조 별도 스위치 노출",
+              "type": "boolean",
+              "default": false
+            },
+            "temperatureMin": {
+              "title": "[신형 AC] 목표온도 최소값(℃) — 개별 장치",
+              "type": "number"
+            },
+            "temperatureMax": {
+              "title": "[신형 AC] 목표온도 최대값(℃) — 개별 장치",
+              "type": "number"
+            },
+            "temperatureStep": {
+              "title": "[신형 AC] 목표온도 스텝(℃) — 개별 장치",
+              "type": "number"
+            },
+
+            "enableNotificationSensor": {
+              "title": "[세탁/건조기] 알림 센서 활성화",
+              "type": "boolean",
+              "default": false,
+              "description": "HomeKit 자동화 트리거용 가상 센서를 노출합니다."
+            },
+            "sensorTypes": {
+              "title": "[세탁/건조기] 센서 종류",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["contact", "motion", "occupancy"]
+              },
+              "default": ["contact"]
+            },
+            "triggerMode": {
+              "title": "[세탁/건조기] 트리거 모드",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["onCompletion", "duringRun"]
+              },
+              "default": ["onCompletion"]
+            },
+            "sensorPollInterval": {
+              "title": "[세탁/건조기] 센서 폴링 간격(초)",
+              "type": "integer",
+              "default": 30,
+              "minimum": 5
+            }
+          },
+          "required": ["deviceType"]
+        }
+      }
+    },
+    "required": ["name", "devices"]
+  },
+
+  "layout": [
+    "name",
+    {
+      "type": "fieldset",
+      "title": "SmartThings 인증 (신형 AC / 세탁기 / 건조기 사용 시 필수)",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        { "type": "help", "help": "1) SmartThings Developer Workspace에서 OAuth 앱 생성<br>2) Scope: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>3) Redirect URI는 https 필수 (리버스 프록시 권장)<br>4) 토큰 파일: <code>smartthings_km81_token.json</code> (통합)" },
+        "clientId",
+        "clientSecret",
+        "redirectUri"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "SmartAC 공용 기본값 (개별 장치에서 덮어씁 수 있음)",
+      "expandable": true,
+      "expanded": false,
+      "items": ["temperatureMin", "temperatureMax", "temperatureStep"]
+    },
+    {
+      "key": "devices",
+      "type": "array",
+      "title": "장치 목록",
+      "startEmpty": true,
+      "orderable": true,
+      "addButtonText": "장치 추가",
+      "arrayItemCardTitle": "deviceLabel || name || deviceType",
+      "items": [
+        "devices[].deviceType",
+
+        { "key": "devices[].name",            "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].ip",              "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].token",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].deviceIndex",     "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].setDeviceIndex",  "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].swingModeType",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].pollingInterval", "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].timeout",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].cacheDuration",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].certPath",        "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].keyPath",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].minTemp",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].maxTemp",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].manufacturer",    "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].debug",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+
+        { "key": "devices[].deviceLabel",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
+        { "key": "devices[].model",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
+        { "key": "devices[].serialNumber",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
+
+        { "key": "devices[].coolModeCommand",      "type": "select",
+          "titleMap": [
+            { "value": "dry",  "name": "제습(Dry)로 명령" },
+            { "value": "cool", "name": "냉방(Cool)로 명령" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].swingBinding",         "type": "select",
+          "titleMap": [
+            { "value": "windFree", "name": "무풍(WindFree)" },
+            { "value": "none",     "name": "사용 안 함" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].lockBinding",          "type": "select",
+          "titleMap": [
+            { "value": "autoClean", "name": "자동건조(Auto Clean)" },
+            { "value": "none",      "name": "사용 안 함" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].exposeWindFreeSwitch",  "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].exposeAutoCleanSwitch", "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].temperatureMin",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].temperatureMax",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+        { "key": "devices[].temperatureStep",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
+
+        { "key": "devices[].enableNotificationSensor",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
+        { "key": "devices[].sensorTypes",
+          "type": "checkboxes",
+          "titleMap": {
+            "contact":   "접촉 센서 (ContactSensor)",
+            "motion":    "모션 센서 (MotionSensor)",
+            "occupancy": "점유 센서 (OccupancySensor)"
+          },
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
+        { "key": "devices[].triggerMode",
+          "type": "checkboxes",
+          "titleMap": {
+            "onCompletion": "운전 종료 시 펀스 알림 (약 10초 활성 후 자동 해제)",
+            "duringRun":    "운전 중 활성 상태 유지"
+          },
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
+        { "key": "devices[].sensorPollInterval",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } }
+      ]
+    }
+  ]
+}
