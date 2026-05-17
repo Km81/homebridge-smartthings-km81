@@ -38,40 +38,52 @@
             "token": { "title": "[구형 AC] 인증 토큰", "type": "string" },
             "deviceIndex": { "title": "[구형 AC] 장치 인덱스 (읽기)", "type": "integer", "default": 0 },
             "setDeviceIndex": { "title": "[구형 AC] 장치 인덱스 (쓰기)", "type": "integer" },
-            "swingModeType": {
-              "title": "[구형 AC] 스윙(회전) 모드 기능",
-              "type": "string",
-              "default": "comfort",
-              "oneOf": [
-                { "title": "Comfort/무풍", "enum": ["comfort"] },
-                { "title": "Wind/상하 바람", "enum": ["wind"] }
-              ]
-            },
             "pollingInterval": { "title": "[구형 AC] 상태 폴링 간격 (초)", "type": "integer" },
             "timeout": { "title": "[구형 AC] 요청 시간 초과 (ms)", "type": "integer", "default": 5000 },
             "cacheDuration": { "title": "[구형 AC] 캐시 유지 시간 (ms)", "type": "integer", "default": 30000 },
             "certPath": { "title": "[구형 AC] 인증서 경로 (선택)", "type": "string", "description": "비워두면 패키지에 포함된 cert/cert.pem을 사용합니다." },
             "keyPath": { "title": "[구형 AC] 키 파일 경로 (선택)", "type": "string" },
-            "debug": { "title": "[구형 AC] 상세 로그", "type": "boolean", "default": false },
-            "minTemp": { "title": "[구형 AC] 최저 설정 온도 (°C)", "type": "integer", "default": 18 },
-            "maxTemp": { "title": "[구형 AC] 최고 설정 온도 (°C)", "type": "integer", "default": 30 },
             "manufacturer": { "title": "[구형 AC] 제조사", "type": "string", "default": "Samsung" },
+            "debug": { "title": "[구형 AC] 상세 로그", "type": "boolean", "default": false },
+            "minTemp": { "title": "[구형 AC] 목표온도 최소값 (°C)", "type": "integer", "default": 18 },
+            "maxTemp": { "title": "[구형 AC] 목표온도 최대값 (°C)", "type": "integer", "default": 30 },
 
             "hkCoolMode": {
               "title": "[구형 AC] HomeKit '냉방(COOL)' 전송 모드",
-              "type": "string", "default": "Cool",
+              "type": "string",
+              "default": "Cool",
+              "required": true,
               "oneOf": [
-                { "title": "냉방 (Cool)", "enum": ["Cool"] },
-                { "title": "냉방청정 (CoolClean)", "enum": ["CoolClean"] },
-                { "title": "제습 (Dry)", "enum": ["Dry"] },
-                { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
-                { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
+                { "title": "냉방 (Cool) 명령", "enum": ["Cool"] },
+                { "title": "냉방청정 (CoolClean) 명령", "enum": ["CoolClean"] },
+                { "title": "제습 (Dry) 명령", "enum": ["Dry"] },
+                { "title": "제습청정 (DryClean) 명령", "enum": ["DryClean"] }
               ],
               "description": "HomeKit에서 '냉방' 버튼을 누를 때 또는 모드 변경 시 실제 AC에 보낼 모드입니다."
             },
-            "enableSwingMode": { "title": "[구형 AC] HomeKit 스윙(SwingMode) 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 타일에서 스윙 버튼이 사라집니다. 의도치 않은 무풍/스윙 토글 방지에 유용합니다." },
-            "enableLockPhysicalControls": { "title": "[구형 AC] HomeKit 어린이 보호용 잠금장치 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 잠금 토글이 사라집니다 (자동건조 토글 매핑)." },
+            "legacySwingBinding": {
+              "title": "[구형 AC] 스윙(Swing) 토글 ↔ 기능",
+              "type": "string",
+              "default": "comfort",
+              "required": true,
+              "oneOf": [
+                { "title": "무풍 (Comfort)", "enum": ["comfort"] },
+                { "title": "상하 바람 (Wind)", "enum": ["wind"] },
+                { "title": "사용 안 함", "enum": ["none"] }
+              ],
+              "description": "HomeKit 스윙 토글이 어떤 실제 기능에 연결될지 선택합니다. '사용 안 함'을 선택하면 HomeKit 타일에서 스윙 버튼이 사라집니다."
+            },
+            "legacyLockBinding": {
+              "title": "[구형 AC] 어린이 보호용 잠금장치 ↔ 기능",
+              "type": "string",
+              "default": "autoClean",
+              "required": true,
+              "oneOf": [
+                { "title": "자동건조 (AutoClean)", "enum": ["autoClean"] },
+                { "title": "사용 안 함", "enum": ["none"] }
+              ],
+              "description": "HomeKit 잠금 토글이 어떤 실제 기능에 연결될지 선택합니다. '사용 안 함'을 선택하면 HomeKit 잠금 토글이 사라집니다."
+            },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -79,33 +91,41 @@
 
             "coolModeCommand": {
               "title": "[신형 AC] HomeKit '냉방(COOL)' 전송 모드",
-              "type": "string", "default": "dry",
+              "type": "string",
+              "default": "cool",
+              "required": true,
               "oneOf": [
-                { "title": "제습(Dry)로 명령", "enum": ["dry"] },
-                { "title": "냉방(Cool)로 명령", "enum": ["cool"] }
+                { "title": "냉방 (Cool) 명령", "enum": ["cool"] },
+                { "title": "냉방청정 (CoolClean) 명령", "enum": ["coolClean"] },
+                { "title": "제습 (Dry) 명령", "enum": ["dry"] },
+                { "title": "제습청정 (DryClean) 명령", "enum": ["dryClean"] }
               ]
             },
             "swingBinding": {
               "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
-              "type": "string", "default": "windFree",
+              "type": "string",
+              "default": "windFree",
+              "required": true,
               "oneOf": [
-                { "title": "무풍(WindFree)", "enum": ["windFree"] },
+                { "title": "무풍 (WindFree)", "enum": ["windFree"] },
                 { "title": "사용 안 함", "enum": ["none"] }
               ]
             },
             "lockBinding": {
               "title": "[신형 AC] 어린이 보호용 잠금장치 ↔ 기능",
-              "type": "string", "default": "autoClean",
+              "type": "string",
+              "default": "autoClean",
+              "required": true,
               "oneOf": [
-                { "title": "자동건조(Auto Clean)", "enum": ["autoClean"] },
+                { "title": "자동건조 (Auto Clean)", "enum": ["autoClean"] },
                 { "title": "사용 안 함", "enum": ["none"] }
               ]
             },
             "exposeWindFreeSwitch": { "title": "[신형 AC] 무풍 별도 스위치 노출", "type": "boolean", "default": false },
             "exposeAutoCleanSwitch": { "title": "[신형 AC] 자동건조 별도 스위치 노출", "type": "boolean", "default": false },
-            "temperatureMin": { "title": "[신형 AC] 목표온도 최소값(℃) — 개별 장치", "type": "number" },
-            "temperatureMax": { "title": "[신형 AC] 목표온도 최대값(℃) — 개별 장치", "type": "number" },
-            "temperatureStep": { "title": "[신형 AC] 목표온도 스텝(℃) — 개별 장치", "type": "number" },
+            "temperatureMin": { "title": "[신형 AC] 목표온도 최소값 (°C)", "type": "number" },
+            "temperatureMax": { "title": "[신형 AC] 목표온도 최대값 (°C)", "type": "number" },
+            "temperatureStep": { "title": "[신형 AC] 목표온도 스텝 (°C)", "type": "number" },
 
             "enableNotificationSensor": { "title": "[세탁/건조기] 알림 센서 활성화", "type": "boolean", "default": false, "description": "HomeKit 자동화 트리거용 가상 센서를 노출합니다." },
             "sensorTypes": { "title": "[세탁/건조기] 센서 종류", "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["contact", "motion", "occupancy"] }, "default": ["contact"] },
@@ -149,57 +169,67 @@
         { "key": "devices[].token",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].deviceIndex",     "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].setDeviceIndex",  "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].swingModeType",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].pollingInterval", "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].timeout",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].cacheDuration",   "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].certPath",        "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].keyPath",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].minTemp",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].maxTemp",         "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].manufacturer",    "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].debug",           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].hkCoolMode",      "type": "select",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].enableSwingMode", "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
-        { "key": "devices[].enableLockPhysicalControls", "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
         { "key": "devices[].deviceLabel",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
+
         { "key": "devices[].model",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
         { "key": "devices[].serialNumber",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
 
-        { "key": "devices[].coolModeCommand",      "type": "select",
+        { "key": "devices[].hkCoolMode", "type": "select",
           "titleMap": [
-            { "value": "dry",  "name": "제습(Dry)로 명령" },
-            { "value": "cool", "name": "냉방(Cool)로 명령" }
+            { "value": "Cool",      "name": "냉방 (Cool) 명령" },
+            { "value": "CoolClean", "name": "냉방청정 (CoolClean) 명령" },
+            { "value": "Dry",       "name": "제습 (Dry) 명령" },
+            { "value": "DryClean",  "name": "제습청정 (DryClean) 명령" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].legacySwingBinding", "type": "select",
+          "titleMap": [
+            { "value": "comfort", "name": "무풍 (Comfort)" },
+            { "value": "wind",    "name": "상하 바람 (Wind)" },
+            { "value": "none",    "name": "사용 안 함" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].legacyLockBinding", "type": "select",
+          "titleMap": [
+            { "value": "autoClean", "name": "자동건조 (AutoClean)" },
+            { "value": "none",      "name": "사용 안 함" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+
+        { "key": "devices[].coolModeCommand", "type": "select",
+          "titleMap": [
+            { "value": "cool",      "name": "냉방 (Cool) 명령" },
+            { "value": "coolClean", "name": "냉방청정 (CoolClean) 명령" },
+            { "value": "dry",       "name": "제습 (Dry) 명령" },
+            { "value": "dryClean",  "name": "제습청정 (DryClean) 명령" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].swingBinding",         "type": "select",
+        { "key": "devices[].swingBinding", "type": "select",
           "titleMap": [
-            { "value": "windFree", "name": "무풍(WindFree)" },
+            { "value": "windFree", "name": "무풍 (WindFree)" },
             { "value": "none",     "name": "사용 안 함" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].lockBinding",          "type": "select",
+        { "key": "devices[].lockBinding", "type": "select",
           "titleMap": [
-            { "value": "autoClean", "name": "자동건조(Auto Clean)" },
+            { "value": "autoClean", "name": "자동건조 (Auto Clean)" },
             { "value": "none",      "name": "사용 안 함" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].exposeWindFreeSwitch",  "type": "checkbox",
+        { "key": "devices[].exposeWindFreeSwitch", "type": "checkbox",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
         { "key": "devices[].exposeAutoCleanSwitch", "type": "checkbox",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].temperatureMin",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].temperatureMax",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].temperatureStep",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
 
         { "key": "devices[].enableNotificationSensor",
@@ -220,7 +250,29 @@
           },
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
         { "key": "devices[].sensorPollInterval",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } }
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
+
+        {
+          "type": "fieldset",
+          "title": "온도 설정 (선택)",
+          "expandable": true, "expanded": false,
+          "items": [
+            { "key": "devices[].minTemp" },
+            { "key": "devices[].maxTemp" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" }
+        },
+        {
+          "type": "fieldset",
+          "title": "온도 설정 (선택)",
+          "expandable": true, "expanded": false,
+          "items": [
+            { "key": "devices[].temperatureMin" },
+            { "key": "devices[].temperatureMax" },
+            { "key": "devices[].temperatureStep" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" }
+        }
       ]
     }
   ]
