@@ -113,6 +113,8 @@
               ]
             },
             "powerOnWithWindFree": { "title": "[구형 AC] 전원 ON 시 무풍 같이 켜기", "type": "boolean", "default": false },
+            "enableSwingMode": { "title": "[구형 AC] HomeKit 스윙(SwingMode) 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 타일에서 스윙 버튼이 사라집니다. 의도치 않은 무풍/스윙 토글 방지에 유용합니다." },
+            "enableLockPhysicalControls": { "title": "[구형 AC] HomeKit 어린이 보호용 잠금장치 노출", "type": "boolean", "default": true, "description": "끄면 HomeKit 잠금 토글이 사라집니다 (자동건조 토글 매핑)." },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -223,6 +225,10 @@
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].powerOnWithWindFree", "type": "checkbox",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc' && model.devices[arrayIndices[0]].powerOnMode && model.devices[arrayIndices[0]].powerOnMode !== 'none';" } },
+        { "key": "devices[].enableSwingMode", "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].enableLockPhysicalControls", "type": "checkbox",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
         { "key": "devices[].deviceLabel",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
