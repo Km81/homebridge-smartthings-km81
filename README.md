@@ -47,17 +47,116 @@ Homebridge UI 플러그인 탭에서 검색해 설치할 수도 있습니다.
 
 ## SmartThings OAuth 인증 절차
 
-1. [SmartThings Developer Workspace](https://smartthings.developer.samsung.com/workspace)에서 `Automation for the SmartThings App` 프로젝트 생성.
-2. Scope에 다음 3개 모두 체크:
-   - `r:devices:*`
-   - `w:devices:*`
-   - `x:devices:*`
-3. `Redirect URI`는 반드시 **HTTPS**. 내부적으로 플러그인은 `8999` 포트에서 콜백을 수신하므로 리버스 프록시로 HTTPS → `http://homebridge:8999`로 전달하세요.
-4. 발급받은 `Client ID` / `Client Secret`을 플러그인 설정에 입력하고 Homebridge 재시작.
-5. 첫 실행 시 로그에 인증 URL이 표시됩니다. 브라우저로 접속해 권한 허용 → 자동으로 토큰이 저장됩니다(`smartthings_km81_token.json`).
-6. Homebridge를 한 번 더 재시작하면 장치가 추가됩니다.
+SmartThings의 보안 정책상 **Redirect URI는 `https` 프로토콜이어야 하며, 별도 포트를 적을 수 없습니다** (즉 기본 443 포트만 허용). 따라서 외부에서 `https://<나의도메인>` 으로 접속할 수 있는 환경을 만들고, 이를 내부 Homebridge의 `http://<homebridge_ip>:8999` 로 전달해주는 **리버스 프록시(Reverse Proxy)** 설정이 필수입니다.
 
-> Webhook lifecycle CONFIRMATION 요청도 같은 서버가 자동 처리합니다.
+### 1단계: 리버스 프록시 설정 (HTTPS → 내부 8999)
+
+가장 먼저 외부에서 접속 가능한 `https` 주소를 준비해야 합니다. **Synology NAS의 리버스 프록시**, **UGreen NAS**, **Nginx Proxy Manager(NPM)**, **Caddy** 등 어떤 도구든 사용 가능합니다.
+
+#### 리버스 프록시 개념
+
+| 구분 | 주소 | 비고 |
+|---|---|---|
+| 외부 주소 (SmartThings 등록용) | `https://<나의도메인>` | **포트 없음** (443 고정) |
+| 내부 주소 (플러그인이 듣는 곳) | `http://<homebridge_ip>:8999` | 포트 `8999` 고정 |
+
+> ⚠️ Redirect URI에 `https://myhome.com:9001` 처럼 **포트를 붙이면 SmartThings가 거부**합니다. 반드시 `https://myhome.com` 형태로, 외부에서 443 포트로 접속 가능해야 합니다.
+
+#### 설정 예시 (Nginx Proxy Manager 기준)
+
+1. NPM 관리 UI → **Proxy Hosts** → **Add Proxy Host**
+2. **Details** 탭:
+   - Domain Names: `myhome.example.com` (본인 도메인)
+   - Scheme: `http`
+   - Forward Hostname / IP: Homebridge 머신의 내부 IP (예: `192.168.1.10`)
+   - Forward Port: `8999`
+   - Block Common Exploits: ✅
+   - Websockets Support: ✅ (선택)
+3. **SSL** 탭:
+   - SSL Certificate: `Request a new SSL Certificate (Let's Encrypt)` 선택
+   - Force SSL: ✅
+   - HTTP/2 Support: ✅
+   - 본인 이메일 입력 후 약관 동의 → **Save**
+
+#### 설정 예시 (Synology NAS 기준)
+
+1. 제어판 → 로그인 포털 → 고급 → 리버스 프록시 → **생성**
+2. 소스: 프로토콜 `HTTPS`, 호스트 `myhome.example.com`, 포트 `443`
+3. 대상: 프로토콜 `HTTP`, 호스트 `<homebridge_ip>`, 포트 `8999`
+
+#### 사전 체크
+
+- 라우터에서 외부 443 포트가 NAS의 443 포트로 포워딩되어 있어야 함
+- DDNS가 현재 공인 IP를 가리키고 있어야 함
+- SSL 인증서가 만료되지 않았어야 함 (Let's Encrypt 자동 갱신 권장)
+
+### 2단계: SmartThings OAuth 앱 생성 (CLI 방식)
+
+#### 2-1. SmartThings CLI 설치
+
+```bash
+npm install -g @smartthings/cli
+```
+
+#### 2-2. 개인용 액세스 토큰(PAT) 발급
+
+1. https://account.smartthings.com/tokens 접속
+2. **Generate new token** 클릭
+3. 모든 권한(scope) 체크 → 생성
+4. 표시되는 토큰 값을 복사 (페이지를 떠나면 다시 못 봅니다)
+
+#### 2-3. CLI 인증
+
+```bash
+# "YOUR_PAT_TOKEN" 부분을 위에서 복사한 토큰으로 교체
+export SMARTTHINGS_TOKEN="YOUR_PAT_TOKEN"
+```
+
+#### 2-4. OAuth-In SmartApp 생성
+
+```bash
+smartthings apps:create
+```
+
+대화형 프롬프트에 다음과 같이 입력:
+
+| 항목 | 입력값 |
+|---|---|
+| What kind of app | `OAuth-In App` |
+| Display Name | `Homebridge SmartThings KM81` (자유) |
+| Description | `Homebridge SmartThings KM81` (자유) |
+| Icon Image URL | (엔터로 넘김) |
+| Target URL | (엔터로 넘김) |
+| Select Scopes | 스페이스바로 다음 3개 모두 선택 후 엔터:<br>`r:devices:*`<br>`w:devices:*`<br>`x:devices:*` |
+| Add or edit Redirect URIs | `Add Redirect URI` 선택 |
+| Redirect URI | **`https://myhome.example.com`** (1단계의 외부 주소, **포트 없이**) |
+| Add or edit Redirect URIs | `Finish editing Redirect URIs` 선택 |
+| Choose an action | `Finish and create OAuth-In SmartApp` 선택 |
+
+생성 완료 후 출력되는 **`OAuth Client Id`** 와 **`OAuth Client Secret`** 을 반드시 즉시 복사해 저장하세요. 다시 볼 수 없습니다.
+
+### 3단계: Homebridge 설정에 입력
+
+Homebridge UI 또는 `config.json`의 플러그인 블록에 다음을 입력:
+
+- `clientId`: 위에서 발급받은 OAuth Client Id
+- `clientSecret`: 위에서 발급받은 OAuth Client Secret
+- `redirectUri`: **2-4에서 입력한 것과 정확히 동일한 값** (예: `https://myhome.example.com`)
+
+Homebridge 재시작.
+
+### 4단계: 권한 허용
+
+1. Homebridge 로그에 인증 URL이 표시됩니다 (예시):
+   ```
+   인증 URL: https://api.smartthings.com/oauth/authorize?client_id=...&scope=...&redirect_uri=https%3A%2F%2Fmyhome.example.com
+   ```
+2. 해당 URL을 브라우저로 열어 SmartThings 로그인 → 위치 선택 → **인증** 클릭
+3. 자동으로 `https://myhome.example.com/?code=...` 로 리다이렉트 → 리버스 프록시 통해 내부 8999 포트로 전달 → 플러그인이 토큰을 발급받아 `smartthings_km81_token.json`에 저장
+4. 로그에 `최초 토큰 발급 완료!` 메시지 확인
+5. Homebridge를 한 번 더 재시작하면 장치가 추가됩니다.
+
+> Webhook lifecycle CONFIRMATION 요청(SmartThings가 처음 앱 등록할 때 보내는 핸드셰이크)도 같은 8999 포트의 서버가 자동 처리합니다.
 
 ---
 
@@ -70,7 +169,7 @@ Homebridge UI 플러그인 탭에서 검색해 설치할 수도 있습니다.
 
   "clientId": "YOUR_CLIENT_ID",
   "clientSecret": "YOUR_CLIENT_SECRET",
-  "redirectUri": "https://myhome.example.com:9001/oauth/callback",
+  "redirectUri": "https://myhome.example.com",
 
   "temperatureMin": 18,
   "temperatureMax": 30,
@@ -139,16 +238,16 @@ Homebridge UI 플러그인 탭에서 검색해 설치할 수도 있습니다.
   - Contact → `open`, Motion → `detected`, Occupancy → `occupied`
   - 약 10초 후 자동 해제
 - `duringRun`: 운전 중에는 활성, 정지 시 비활성
-- 각 센서는 별도 액세서리로 노출됩니다.
-  예: `세탁기 - 종료 알림 (접촉)`, `세탁기 - 운전 중 (모션)`
+- 각 센서는 별도 액세서리로 노출됩니다 (HomeKit 이름 정책상 `-` 와 `()` 같은 특수문자를 쓰지 않습니다).
+  예: `세탁기 종료알림 접촉`, `세탁기 운전중 모션`
 
 ### HomeKit 자동화 예시
 
 | 시나리오 | 트리거 | 동작 |
 | --- | --- | --- |
-| 세탁 완료 시 거실 조명 깜빡임 | "세탁기 - 종료 알림 (접촉)"이 열리면 | 거실 조명 On → 1분 후 Off |
-| 건조기 운전 중 환풍기 켜기 | "건조기 - 운전 중 (점유)"이 점유 감지되면 | 환풍기 On |
-| 건조 완료 시 알림 | "건조기 - 종료 알림 (모션)"에서 동작 감지되면 | 알림 전송 |
+| 세탁 완료 시 거실 조명 깜빡임 | "세탁기 종료알림 접촉"이 열리면 | 거실 조명 On → 1분 후 Off |
+| 건조기 운전 중 환풍기 켜기 | "건조기 운전중 점유"이 점유 감지되면 | 환풍기 On |
+| 건조 완료 시 알림 | "건조기 종료알림 모션"에서 동작 감지되면 | 알림 전송 |
 
 > HomeKit은 ContactSensor의 *열림* 이벤트를 강력한 푸시 트리거로 사용할 수 있어, "운전 종료 즉시 폰 알림"이 필요한 경우 `contact` + `onCompletion` 조합을 권장합니다.
 
@@ -157,7 +256,7 @@ Homebridge UI 플러그인 탭에서 검색해 설치할 수도 있습니다.
 ## 구형 에어컨 (legacyAc) 참고
 
 - 인증서 경로(`certPath`/`keyPath`)를 비워두면 패키지에 포함된 `cert/cert.pem`을 사용합니다.
-- `swingModeType`은 모델에 따라 `comfort`(무풍/쿠적) 또는 `wind`(상하 스윈) 중 선택.
+- `swingModeType`은 모델에 따라 `comfort`(무풍) 또는 `wind`(상하 바람) 중 선택.
 - TLSv1 / `DEFAULT@SECLEVEL=0`은 구형 펌웨어 호환을 위해 의도적으로 사용합니다.
 
 ---
