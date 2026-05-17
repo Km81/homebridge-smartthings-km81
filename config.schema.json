@@ -67,7 +67,7 @@
                 { "title": "제습 (Dry)", "enum": ["Dry"] },
                 { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
                 { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
             "hkCoolWithWindFree": { "title": "[구형 AC] HomeKit 냉방 시 무풍(Comode_Nano) 같이 켜기", "type": "boolean", "default": false },
@@ -81,7 +81,7 @@
                 { "title": "제습 (Dry)", "enum": ["Dry"] },
                 { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
                 { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
             "hkHeatWithWindFree": { "title": "[구형 AC] HomeKit 난방 시 무풍 같이 켜기", "type": "boolean", "default": false },
@@ -95,7 +95,7 @@
                 { "title": "제습 (Dry)", "enum": ["Dry"] },
                 { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
                 { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
             "hkAutoWithWindFree": { "title": "[구형 AC] HomeKit 자동 시 무풍 같이 켜기", "type": "boolean", "default": false },
@@ -109,7 +109,7 @@
                 { "title": "제습 (Dry)", "enum": ["Dry"] },
                 { "title": "제습청정 (DryClean)", "enum": ["DryClean"] },
                 { "title": "공기청정 (Wind)", "enum": ["Wind"] },
-                { "title": "스마트 샾적 (Auto)", "enum": ["Auto"] }
+                { "title": "스마트 쾌적 (Auto)", "enum": ["Auto"] }
               ]
             },
             "powerOnWithWindFree": { "title": "[구형 AC] 전원 ON 시 무풍 같이 켜기", "type": "boolean", "default": false },
