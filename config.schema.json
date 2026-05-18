@@ -121,10 +121,9 @@
             "temperatureMax": { "title": "[신형 AC] 목표온도 최대값 (°C)", "type": "number" },
             "temperatureStep": { "title": "[신형 AC] 목표온도 스텝 (°C)", "type": "number" },
 
-            "enableNotificationSensor": { "title": "[세탁/건조기] 알림 센서 활성화", "type": "boolean", "default": false, "description": "HomeKit 자동화 트리거용 가상 센서를 노출합니다." },
-            "sensorTypes": { "title": "[세탁/건조기] 센서 종류", "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["contact", "motion", "occupancy"] }, "default": ["contact"] },
-            "triggerMode": { "title": "[세탁/건조기] 트리거 모드", "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["onCompletion", "duringRun"] }, "default": ["onCompletion"] },
-            "sensorPollInterval": { "title": "[세탁/건조기] 센서 폴링 간격(초)", "type": "integer", "default": 30, "minimum": 5 }
+            "enableNotificationSensor": { "title": "[세탁/건조기] 종료 알림 센서 활성화", "type": "boolean", "default": false, "description": "운전 종료 시 iOS 푸시 알림을 받기 위한 가상 모션 센서를 노출합니다. (HomeKit 자동화 트리거로도 사용 가능)" },
+            "sensorName": { "title": "[세탁/건조기] 종료 알림 센서 이름", "type": "string", "description": "HomeKit에 표시될 모션 센서 이름. 비워두면 '{장치명} 종료알림'으로 자동 생성됩니다." },
+            "sensorPollInterval": { "title": "[세탁/건조기] 상태 폴링 간격(초)", "type": "integer", "default": 30, "minimum": 5, "description": "운전 종료를 감지하기 위해 SmartThings 상태를 확인하는 주기입니다." }
           },
           "required": ["deviceType"]
         }
@@ -228,20 +227,7 @@
 
         { "key": "devices[].enableNotificationSensor",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);" } },
-        { "key": "devices[].sensorTypes",
-          "type": "checkboxes",
-          "titleMap": {
-            "contact":   "접촉 센서 (ContactSensor)",
-            "motion":    "모션 센서 (MotionSensor)",
-            "occupancy": "점유 센서 (OccupancySensor)"
-          },
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
-        { "key": "devices[].triggerMode",
-          "type": "checkboxes",
-          "titleMap": {
-            "onCompletion": "운전 종료 시 펄스 알림 (약 10초 활성 후 자동 해제)",
-            "duringRun":    "운전 중 활성 상태 유지"
-          },
+        { "key": "devices[].sensorName",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
         { "key": "devices[].sensorPollInterval",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;" } },
