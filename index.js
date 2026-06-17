@@ -62,7 +62,11 @@ class SmartThingsKM81Platform {
 
     this.log.info(`${PLATFORM_NAME} 플랫폼 초기화 중... (v${pkg.version})`);
 
-    this.api.on('didFinishLaunching', () => this._didFinishLaunching());
+    // 디바이스 바인딩은 부팅당 1회만 보장 — OAuth 콜백 경로에서도 같은 액세서리에
+    // listener/타이머가 중복 등록되지 않도록 한다.
+    this._boundAccessoryIds = new Set();
+
+    this.api.once('didFinishLaunching', () => this._didFinishLaunching());
     this.api.once('shutdown', () => this._shutdown());
   }
 
@@ -80,6 +84,7 @@ class SmartThingsKM81Platform {
 
     if (this.devices.length === 0) {
       this.log.warn('설정된 장치(devices)가 없습니다.');
+      // 설정 비어 있을 때만 cleanup 수행 (의도된 빈 설정)
       this._cleanupStaleAccessories();
       return;
     }
@@ -95,27 +100,35 @@ class SmartThingsKM81Platform {
       d?.deviceType === 'smartAc' || d?.deviceType === 'washer' || d?.deviceType === 'dryer'
     );
 
+    let stDiscoverySucceeded = stDevices.length === 0;
     if (stDevices.length > 0 && this.smartthings) {
       const hasToken = await this.smartthings.init();
       if (!hasToken) {
         this.oauthServer.start(async () => {
-          await this._discoverAndBindSmartThings(stDevices);
-          this._cleanupStaleAccessories();
+          const ok = await this._discoverAndBindSmartThings(stDevices);
+          if (ok) this._cleanupStaleAccessories();
         });
       } else {
-        await this._discoverAndBindSmartThings(stDevices);
+        stDiscoverySucceeded = await this._discoverAndBindSmartThings(stDevices);
       }
     }
 
-    this._cleanupStaleAccessories();
+    // SmartThings 검색이 실패/빈 결과였다면 stale cleanup을 건너뛴다.
+    // — 일시 장애 시 사용자의 알림 센서·자동화·방 배치가 영구 삭제되는 것을 막기 위함.
+    if (stDiscoverySucceeded) {
+      this._cleanupStaleAccessories();
+    } else {
+      this.log.warn('SmartThings 장치 검색이 실패하거나 비어 있어, 오래된 액세서리 정리를 건너뜁니다. (자동화 보호)');
+    }
   }
 
+  // 성공 시 true, 실패/빈 결과 시 false 반환. 호출자가 cleanup 여부를 결정한다.
   async _discoverAndBindSmartThings(stDevices) {
     try {
       const remoteDevices = await this.smartthings.getDevices();
       if (!remoteDevices || remoteDevices.length === 0) {
         this.log.warn('SmartThings에서 어떤 장치도 찾지 못했습니다. 권한이나 연결을 확인해주세요.');
-        return;
+        return false;
       }
       this.log.info(`총 ${remoteDevices.length}개의 SmartThings 장치를 발견했습니다.`);
 
@@ -133,8 +146,10 @@ class SmartThingsKM81Platform {
         this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) 장치를 HomeKit에 추가/갱신합니다.`);
         this._bindSmartThingsDevice(found, configDevice);
       }
+      return true;
     } catch (e) {
       this.log.error('SmartThings 장치 검색 중 오류:', e.message);
+      return false;
     }
   }
 
@@ -187,6 +202,14 @@ class SmartThingsKM81Platform {
       this.accessories.push(accessory);
     }
     this.activeUUIDs.add(uuid);
+
+    // 같은 액세서리가 이미 configure 되었다면 logic 재인스턴스화/listener 재등록을 건너뛴다.
+    // (OAuth 콜백 경로에서도 _bindSmartThingsDevice가 한 부팅 안에 두 번 호출될 수 있음)
+    if (this._boundAccessoryIds.has(uuid)) {
+      this.log.debug?.(`이미 설정된 액세서리(${device.label}) 중복 바인딩을 건너뜁니다.`);
+      return;
+    }
+    this._boundAccessoryIds.add(uuid);
 
     if (configDevice.deviceType === 'smartAc') {
       const ac = new SmartAC({ log: this.log, api: this.api, smartthings: this.smartthings, platform: this });
