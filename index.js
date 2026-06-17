@@ -196,8 +196,16 @@ class SmartThingsKM81Platform {
       packageRoot: PACKAGE_ROOT
     });
     // 인증서 실패 등으로 초기화가 완료되지 못한 logic은 등록하지 않는다.
+    // HomeKit에 dead tile이 남지 않도록 미리 등록한 accessory도 정리.
     if (!logic._initialized) {
-      this.log.error(`'${configDevice.name}' (legacyAc) 초기화 실패 — 액세서리는 등록되지만 동작하지 않습니다. 인증서/네트워크 설정을 확인하세요.`);
+      this.log.error(`'${configDevice.name}' (legacyAc) 초기화 실패 — 인증서/네트워크 설정을 확인하세요. HomeKit에서 액세서리를 제거합니다.`);
+      try {
+        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      } catch (e) {
+        this.log.warn(`초기화 실패 accessory 제거 오류: ${e.message}`);
+      }
+      this.accessories = this.accessories.filter(a => a.UUID !== uuid);
+      this.activeUUIDs.delete(uuid);
       return;
     }
     this.legacyLogics.push(logic);
