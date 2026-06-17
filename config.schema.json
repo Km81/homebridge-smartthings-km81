@@ -94,10 +94,10 @@
               "type": "string",
               "default": "drop",
               "oneOf": [
-                { "title": "무시 (드롭) — 사용자가 직접 재설정", "enum": ["drop"] },
-                { "title": "큐 — 보호 시간 후 한 번에 전송", "enum": ["queue"] }
+                { "title": "무시 (드롭) — 손으로 켜고 사용", "enum": ["drop"] },
+                { "title": "큐 — 자동화/Siri 일괄 동작", "enum": ["queue"] }
               ],
-              "description": "기본값 '무시'는 ON 명령만 보내고 끝납니다. '큐'는 자동화('켜고 26도로') 등을 위해 보호 시간 종료 후 한 번에 발사합니다."
+              "description": "ON 명령 직후 들어오는 모드/온도/스윙/잠금 명령을 어떻게 다룰지 선택합니다. 일반적으로 손으로 켜는 사용 패턴이면 '무시'가 안전하고, HomeKit 자동화로 '켜고 26도로' 같은 일괄 동작을 쓴다면 '큐'를 권장합니다."
             },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
