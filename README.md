@@ -182,14 +182,10 @@ Homebridge 재시작.
       "name": "거실 에어컨",
       "ip": "192.168.1.50",
       "token": "LEGACY_TOKEN",
-      "swingModeType": "comfort",
       "pollingInterval": 60,
       "hkCoolMode": "DryClean",
-      "hkCoolWithWindFree": true,
-      "hkHeatMode": "none",
-      "hkAutoMode": "none",
-      "powerOnMode": "DryClean",
-      "powerOnWithWindFree": true
+      "legacySwingBinding": "comfort",
+      "legacyLockBinding": "autoClean"
     },
     {
       "deviceType": "smartAc",
@@ -376,45 +372,39 @@ if __name__ == '__main__':
 
 ---
 
-## HomeKit ↔ 구형 AC 모드 매핑 (legacyAc, v1.2.0+)
+## HomeKit ↔ 구형 AC 모드 매핑 (legacyAc, v1.3.0+ 단순화)
 
-구형 삼성 에어컨은 단순 `Cool`/`Dry`/`Auto`/`Wind` 외에도 `CoolClean`(냉방청정), `DryClean`(제습청정) 같은 복합 모드를 지원합니다. HomeKit의 **냉방(Cool) / 난방(Heat) / 자동(Auto)** 각 버튼을 어떤 실제 AC 모드에 매핑할지 **드롭다운으로** 선택할 수 있습니다.
+v1.3.0 이후 구형 에어컨은 **HomeKit '냉방(Cool)' 단일 모드만** 노출하고, 그 버튼이 실제 AC의 어떤 모드 명령을 보낼지를 드롭다운으로 선택합니다. 난방(Heat)·자동(Auto) 버튼은 HomeKit에서 제거되었습니다. (Heat/Auto가 필요하면 `swingBinding`/`lockBinding`을 다른 기능에 매핑해 별도 토글로 활용하세요.)
 
 ### 설정 필드 (`legacyAc` 장치 단위)
 
 | 필드 | 설명 | 기본값 |
 |---|---|---|
-| `hkCoolMode` | HomeKit '냉방' 버튼이 보낼 AC 모드 (enum) | `"Cool"` |
-| `hkCoolWithWindFree` | HomeKit 냉방 시 무풍(Comode_Nano) 같이 켜기 | `false` |
-| `hkHeatMode` | HomeKit '난방' 버튼이 보낼 AC 모드 (enum) | `"none"` (숨김) |
-| `hkHeatWithWindFree` | HomeKit 난방 시 무풍 같이 켜기 | `false` |
-| `hkAutoMode` | HomeKit '자동' 버튼이 보낼 AC 모드 (enum) | `"none"` (숨김) |
-| `hkAutoWithWindFree` | HomeKit 자동 시 무풍 같이 켜기 | `false` |
-| `powerOnMode` | 전원 ON 시 자동 적용할 AC 모드 (enum) | `"none"` (직전 모드 유지) |
-| `powerOnWithWindFree` | 전원 ON 시 무풍 같이 켜기 | `false` |
+| `hkCoolMode` | HomeKit '냉방' 버튼이 보낼 AC 모드 | `"Cool"` |
+| `legacySwingBinding` | HomeKit 스윙 토글이 매핑될 실제 기능 | `"comfort"` |
+| `legacyLockBinding` | HomeKit 어린이 보호 잠금이 매핑될 실제 기능 | `"autoClean"` |
 
-### 선택 가능한 모드 (enum 값)
+### 선택 가능한 값
+
+`hkCoolMode`:
 
 | 값 | 의미 |
 |---|---|
-| `none` | 사용 안 함 (HomeKit 버튼 숨김 / 전원 ON 시 모드 변경 안 함) |
 | `Cool` | 냉방 |
 | `CoolClean` | 냉방청정 |
 | `Dry` | 제습 |
 | `DryClean` | 제습청정 |
-| `Wind` | 공기청정 (송풍) |
-| `Auto` | 스마트 쾌적 |
+
+`legacySwingBinding`: `comfort`(무풍) · `wind`(상하 바람) · `none`(스윙 토글 숨김)
+`legacyLockBinding`: `autoClean`(자동건조) · `none`(잠금 토글 숨김)
 
 ### 동작 방식
 
-- HomeKit에서 모드 버튼을 누르면 `PUT /devices/{N}/mode` 로 `{"modes":["<선택한값>"]}` 전송
-- `WithWindFree` 체크가 켜져 있으면 이어서 `{"options":["Comode_Nano"]}` 도 전송
-- `none` 선택 시 해당 HomeKit 버튼이 `validValues`에서 제외되어 **HomeKit에 아예 안 보임**
-- 전원 ON 시 `powerOnMode` 가 `none` 이 아니면, 전원 명령 직후 자동으로 해당 모드 적용
+- HomeKit에서 '냉방' 버튼을 누르면 `PUT /devices/{N}/mode`로 `{"modes":["<hkCoolMode>"]}` 전송
+- 꺼져 있는 상태에서 누르면 먼저 전원 ON 명령을 보낸 뒤 모드 명령을 직렬화해서 보냄(v1.2.2 race fix 보존)
+- 스윙·잠금 토글은 매핑된 실제 기능(무풍/상하 바람/자동건조)을 켭니다.
 
 ### 설정 예시
-
-**예시 A — 전원 ON 시 항상 "제습청정 + 무풍"으로 시작, HomeKit은 냉방만 노출**
 
 ```jsonc
 {
@@ -424,45 +414,19 @@ if __name__ == '__main__':
   "token": "YOUR_TOKEN",
 
   "hkCoolMode": "DryClean",
-  "hkCoolWithWindFree": true,
-
-  "hkHeatMode": "none",
-  "hkAutoMode": "none",
-
-  "powerOnMode": "DryClean",
-  "powerOnWithWindFree": true
+  "legacySwingBinding": "comfort",
+  "legacyLockBinding": "autoClean"
 }
 ```
 
-**예시 B — HomeKit 3개 버튼을 각각 다른 청정 모드로**
-
-```jsonc
-{
-  "deviceType": "legacyAc",
-  "name": "안방 에어컨",
-  "ip": "192.168.1.51",
-  "token": "YOUR_TOKEN",
-
-  "hkCoolMode": "CoolClean",
-  "hkHeatMode": "DryClean",
-  "hkAutoMode": "Auto",
-
-  "powerOnMode": "CoolClean"
-}
-```
-
-> 💡 HomeKit이 'Heat'를 난방으로 표시하지만, 실제로는 사용자가 원하는 어떤 모드든 매핑할 수 있습니다 (이름표일 뿐).
-
-### v1.1.x 에서 v1.2.0 마이그레이션
-
-기존 `hkCoolEnabled`/`hkCoolModes[]`/`hkCoolOptions[]` 같은 배열 기반 필드도 **자동으로 인식**됩니다 (config.json을 안 고쳐도 v1.2.0 에서 그대로 작동). UI에서 다시 저장하면 새 필드(`hkCoolMode`, `hkCoolWithWindFree`)로 정리됩니다.
+> v1.1.x의 `hkCoolModes[]` 배열은 첫 항목이 자동으로 `hkCoolMode`로 인식됩니다. 그 외의 v1.2.x 시절 필드(`hkCoolWithWindFree`, `hkHeatMode`, `hkAutoMode`, `powerOnMode` 등)는 v1.3.0에서 의도적으로 제거되었으며 설정에 남아 있어도 무시됩니다.
 
 ---
 
 ## 구형 에어컨 (legacyAc) 참고
 
 - 인증서 경로(`certPath`/`keyPath`)를 비워두면 패키지에 포함된 `cert/cert.pem`을 사용합니다.
-- `swingModeType`은 모델에 따라 `comfort`(무풍) 또는 `wind`(상하 바람) 중 선택.
+- 스윙 매핑은 `legacySwingBinding`로 선택합니다 (`comfort`(무풍) · `wind`(상하 바람) · `none`).
 - TLSv1 / `DEFAULT@SECLEVEL=0`은 구형 펌웨어 호환을 위해 의도적으로 사용합니다.
 - `deviceIndex` / `setDeviceIndex`: 하나의 에어컨 본체에 여러 `Devices[N]` 엔트리가 있는 모델(예: 스탠드+벽걸이 결합)에서 어떤 인덱스를 읽고/쓸지 지정합니다. 기본값 `0`.
 
