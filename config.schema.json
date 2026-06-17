@@ -81,6 +81,24 @@
               ],
               "description": "HomeKit 잠금 토글이 어떤 실제 기능에 연결될지 선택합니다. '사용 안 함'을 선택하면 HomeKit 잠금 토글이 사라집니다."
             },
+            "legacyOnGuardMs": {
+              "title": "[구형 AC] 전원 ON 직후 보호 시간 (ms)",
+              "type": "integer",
+              "default": 2000,
+              "minimum": 0,
+              "maximum": 10000,
+              "description": "전원을 켠 직후 이 시간 동안은 다른 명령(모드/온도/스윙/잠금)을 실제 기기에 보내지 않습니다. 구형 펌웨어가 동시 명령을 놓치는 것을 막기 위함입니다. 0으로 두면 보호를 끕니다."
+            },
+            "legacyOnGuardStrategy": {
+              "title": "[구형 AC] ON 보호 중 다른 명령 처리",
+              "type": "string",
+              "default": "drop",
+              "oneOf": [
+                { "title": "무시 (드롭) — 사용자가 직접 재설정", "enum": ["drop"] },
+                { "title": "큐 — 보호 시간 후 한 번에 전송", "enum": ["queue"] }
+              ],
+              "description": "기본값 '무시'는 ON 명령만 보내고 끝납니다. '큐'는 자동화('켜고 26도로') 등을 위해 보호 시간 종료 후 한 번에 발사합니다."
+            },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -197,6 +215,14 @@
           "titleMap": [
             { "value": "autoClean", "name": "자동건조 (AutoClean)" },
             { "value": "none",      "name": "사용 안 함" }
+          ],
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].legacyOnGuardMs",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].legacyOnGuardStrategy", "type": "select",
+          "titleMap": [
+            { "value": "drop",  "name": "무시 (드롭)" },
+            { "value": "queue", "name": "큐 (보호 후 한 번에 전송)" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
