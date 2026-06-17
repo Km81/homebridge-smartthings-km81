@@ -57,6 +57,17 @@ class SmartThingsKM81Platform {
         }
         this.smartthings = new SmartThingsClient(this.log, this.api, this.config);
         this.oauthServer = new OAuthServer({ log: this.log, smartthings: this.smartthings, config: this.config });
+        // refresh 토큰까지 만료된 상황에서 자동으로 OAuth 흐름을 다시 띄운다.
+        this.smartthings.setReauthCallback(() => {
+          this.log.warn('OAuth 재인증을 위한 인증 서버를 다시 시작합니다.');
+          this.oauthServer.start(async () => {
+            // 재인증 성공 후 SmartThings 장치 재바인딩
+            const stDevices = this.devices.filter(d =>
+              d?.deviceType === 'smartAc' || d?.deviceType === 'washer' || d?.deviceType === 'dryer'
+            );
+            await this._discoverAndBindSmartThings(stDevices);
+          });
+        });
       }
     }
 
@@ -138,11 +149,15 @@ class SmartThingsKM81Platform {
           this.log.warn('deviceLabel이 비어있는 SmartThings 장치 설정을 건너뜁니다.');
           continue;
         }
-        const found = remoteDevices.find(d => normalizeKorean(d.label) === targetLabel);
-        if (!found) {
+        const matches = remoteDevices.filter(d => normalizeKorean(d.label) === targetLabel);
+        if (matches.length === 0) {
           this.log.warn(`'${configDevice.deviceLabel}'에 해당하는 장치를 SmartThings에서 찾지 못했습니다.`);
           continue;
         }
+        if (matches.length > 1) {
+          this.log.warn(`'${configDevice.deviceLabel}' 이름과 일치하는 장치가 ${matches.length}개 발견되었습니다. SmartThings 앱에서 장치 이름을 고유하게 변경해주세요. 첫 번째 장치를 사용합니다.`);
+        }
+        const found = matches[0];
         this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) 장치를 HomeKit에 추가/갱신합니다.`);
         this._bindSmartThingsDevice(found, configDevice);
       }
