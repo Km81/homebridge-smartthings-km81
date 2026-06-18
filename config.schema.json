@@ -38,7 +38,7 @@
             "token": { "title": "[구형 AC] 인증 토큰", "type": "string" },
             "deviceIndex": { "title": "[구형 AC] 장치 인덱스 (읽기)", "type": "integer", "default": 0 },
             "setDeviceIndex": { "title": "[구형 AC] 장치 인덱스 (쓰기)", "type": "integer" },
-            "pollingInterval": { "title": "[AC 공통] 상태 폴링 간격 (초)", "type": "integer", "description": "구형 AC: 비워두면 폴링 안 함. 신형 AC: 비워두면 30초로 자동 폴링 (SmartThings 앱/리모컨에서 변경한 상태를 HomeKit에 반영). 신형 AC 최소 10초까지 허용되며 더 낮은 값은 10초로 올림됩니다. 0을 입력하면 신형 AC 폴링을 끕니다." },
+            "pollingInterval": { "title": "[AC 공통] 상태 폴링 간격 (초)", "type": "integer", "description": "구형 AC: 비워두면 폴링 안 함. 신형 AC: 비워두면 30초로 자동 폴링 (SmartThings 앱/리모컨에서 변경한 상태를 HomeKit에 반영). 신형 AC 최소 5초까지 허용되며 더 낮은 값은 5초로 올림됩니다. 5초로 설정 시 평균 2.5초/최대 5초 안에 외부 변경이 HomeKit에 반영됩니다. 0을 입력하면 신형 AC 폴링을 끕니다." },
             "timeout": { "title": "[구형 AC] 요청 시간 초과 (ms)", "type": "integer", "default": 5000 },
             "cacheDuration": { "title": "[구형 AC] 캐시 유지 시간 (ms)", "type": "integer", "default": 30000 },
             "certPath": { "title": "[구형 AC] 인증서 경로 (선택)", "type": "string", "description": "비워두면 패키지에 포함된 cert/cert.pem을 사용합니다." },
