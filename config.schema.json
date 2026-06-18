@@ -165,7 +165,7 @@
       "type": "fieldset",
       "title": "SmartAC 공용 기본값 (개별 장치에서 덮어쓸 수 있음)",
       "expandable": true, "expanded": false,
-      "items": ["temperatureMin", "temperatureMax", "temperatureStep"]
+      "items": ["temperatureMin", "temperatureMax"]
     },
     {
       "key": "devices",
@@ -266,8 +266,6 @@
         { "key": "devices[].temperatureMin",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
         { "key": "devices[].temperatureMax",
-          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } },
-        { "key": "devices[].temperatureStep",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';" } }
       ]
     }
