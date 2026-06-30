@@ -1,0 +1,72 @@
+name: Publish to npm
+
+# 트리거:
+# 1) 'v*' 태그 push (예: v1.0.0)
+# 2) Actions 탭에서 Run workflow (dry-run 옵션)
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (npm publish --dry-run)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Show npm/node versions
+        run: |
+          node --version
+          npm --version
+          npm whoami || echo "(whoami failed — 이상이 아님: token 인증은 publish 시점에 적용됨)"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Sanity check (syntax)
+        run: |
+          for f in index.js lib/api/SmartThingsClient.js lib/api/LegacyACClient.js \
+                   lib/auth/OAuthServer.js lib/accessories/LegacyAC.js \
+                   lib/accessories/SmartAC.js lib/accessories/Laundry.js; do
+            node --check "$f"
+          done
+          node -e "JSON.parse(require('fs').readFileSync('config.schema.json','utf8'))"
+          echo "All syntax checks passed."
+
+      - name: Verify package version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version matches: $PKG_VERSION"
+
+      - name: Publish to npm (dry-run)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        run: npm publish --dry-run --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npm
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

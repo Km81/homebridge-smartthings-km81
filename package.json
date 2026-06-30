@@ -1,0 +1,41 @@
+{
+  "name": "homebridge-smartthings-km81",
+  "version": "1.8.15",
+  "description": "Unified Homebridge plugin for Samsung devices via SmartThings (legacy AC over TLSv1, modern AC, washer/dryer with notification sensors).",
+  "main": "index.js",
+  "author": "Km81",
+  "license": "MIT",
+  "keywords": [
+    "homebridge-plugin",
+    "homebridge",
+    "smartthings",
+    "samsung",
+    "ac",
+    "air-conditioner",
+    "washer",
+    "dryer",
+    "oauth",
+    "km81"
+  ],
+  "engines": {
+    "homebridge": ">=1.6.0",
+    "node": ">=18.0.0"
+  },
+  "homebridge": {
+    "verifiedPlugin": true,
+    "schema": "config.schema.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Km81/homebridge-smartthings-km81.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Km81/homebridge-smartthings-km81/issues"
+  },
+  "homepage": "https://github.com/Km81/homebridge-smartthings-km81#readme",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "axios-retry": "^4.4.0",
+    "lru-cache": "^10.2.2"
+  }
+}
