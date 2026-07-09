@@ -105,6 +105,12 @@
               "default": false,
               "description": "전원을 켤 때마다 약 2초 뒤 설정된 모드(구형: 'HomeKit 냉방 매핑', 신형: '냉방 전송 모드')를 자동으로 1회 더 보냅니다. 켜는 순간의 모드 명령은 기기가 무시하거나 HomeKit이 아예 보내지 않는 경우가 있어, 항상 설정 모드(예: 제습청정 DryClean)로 켜지길 원할 때 사용합니다."
             },
+            "resendAutoCleanOnPowerOn": {
+              "title": "[AC 공통] 전원 ON 후 자동건조 자동 켜기",
+              "type": "boolean",
+              "default": false,
+              "description": "전원을 켤 때마다 자동건조(AutoClean)를 자동으로 켭니다. '설정 모드 자동 재전송'과 함께 쓰면 전원 → 2초 → 모드 → 2초 → 자동건조 순서로 전송됩니다(구형 기기가 짧은 간격의 다중 명령을 놓치는 것을 피하기 위한 간격)."
+            },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -232,6 +238,8 @@
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
         { "key": "devices[].resendModeOnPowerOn",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
+        { "key": "devices[].resendAutoCleanOnPowerOn",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
 
         { "key": "devices[].coolModeCommand", "type": "select", "required": true,
