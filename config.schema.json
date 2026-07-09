@@ -109,7 +109,33 @@
               "title": "[AC 공통] 전원 ON 후 자동건조 자동 켜기",
               "type": "boolean",
               "default": false,
-              "description": "전원을 켤 때마다 자동건조(AutoClean)를 자동으로 켭니다. '설정 모드 자동 재전송'과 함께 쓰면 전원 → 2초 → 모드 → 2초 → 자동건조 순서로 전송됩니다(구형 기기가 짧은 간격의 다중 명령을 놓치는 것을 피하기 위한 간격)."
+              "description": "전원을 켤 때마다 자동건조(AutoClean)를 자동으로 켭니다. '설정 모드 자동 재전송'과 함께 쓰면 전원 → 모드 → 자동건조 순서로 전송됩니다(구형 기기가 짧은 간격의 다중 명령을 놓치는 것을 피하기 위한 간격)."
+            },
+            "resendSwingOffOnPowerOn": {
+              "title": "[구형 AC] 전원 ON 후 스윙(회전) 자동 끄기",
+              "type": "boolean",
+              "default": false,
+              "description": "일부 기기(특히 벽걸이형)는 켜질 때/모드 변경 때 스스로 회전을 켭니다. 이 옵션을 켜면 후속 재전송 체인 마지막에 스윙 끄기 명령을 보내 항상 회전 꺼짐 상태로 시작합니다."
+            },
+            "powerOnResendStepMs": {
+              "title": "[AC 공통] 후속 재전송 단계 간격 (ms)",
+              "type": "integer",
+              "default": 2000,
+              "minimum": 1000,
+              "maximum": 10000,
+              "description": "전원 ON 후속 재전송 체인(모드 → 자동건조 → 스윙 끄기)의 각 단계 사이 간격입니다. 명령을 자주 놓치는 반응 느린 기기는 4000 정도로 늘려보세요."
+            },
+            "hideSwingToggle": {
+              "title": "[구형 AC] 스윙 토글 HomeKit에서 숨기기",
+              "type": "boolean",
+              "default": false,
+              "description": "iOS 홈 앱이 에어컨 타일 탭의 기본 동작으로 전원 대신 스윙 토글을 고르는 경우가 있습니다. 이 옵션을 켜면 스윙 토글이 홈 앱에서 사라져 탭이 항상 전원 켜기/끄기로 동작합니다. ('전원 ON 후 스윙 자동 끄기' 등 내부 동작은 유지됩니다.)"
+            },
+            "hideLockToggle": {
+              "title": "[구형 AC] 잠금(자동건조) 토글 HomeKit에서 숨기기",
+              "type": "boolean",
+              "default": false,
+              "description": "잠금 토글(자동건조 매핑)을 홈 앱에서 숨깁니다. 스윙 토글을 숨겼는데도 타일 탭이 전원이 아닌 다른 것을 토글하면 이 옵션도 켜보세요. ('전원 ON 후 자동건조 자동 켜기'는 계속 동작합니다.)"
             },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
@@ -241,6 +267,14 @@
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
         { "key": "devices[].resendAutoCleanOnPowerOn",
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
+        { "key": "devices[].resendSwingOffOnPowerOn",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].powerOnResendStepMs",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
+        { "key": "devices[].hideSwingToggle",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].hideLockToggle",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
 
         { "key": "devices[].coolModeCommand", "type": "select", "required": true,
           "titleMap": [
