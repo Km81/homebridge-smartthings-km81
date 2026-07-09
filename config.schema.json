@@ -99,6 +99,12 @@
               ],
               "description": "ON 명령 직후 들어오는 모드/온도/스윙/잠금 명령을 어떻게 다룰지 선택합니다. 일반적으로 손으로 켜는 사용 패턴이면 '무시'가 안전하고, HomeKit 자동화로 '켜고 26도로' 같은 일괄 동작을 쓴다면 '큐'를 권장합니다."
             },
+            "resendModeOnPowerOn": {
+              "title": "[AC 공통] 전원 ON 후 설정 모드 자동 재전송",
+              "type": "boolean",
+              "default": false,
+              "description": "전원을 켤 때마다 약 2초 뒤 설정된 모드(구형: 'HomeKit 냉방 매핑', 신형: '냉방 전송 모드')를 자동으로 1회 더 보냅니다. 켜는 순간의 모드 명령은 기기가 무시하거나 HomeKit이 아예 보내지 않는 경우가 있어, 항상 설정 모드(예: 제습청정 DryClean)로 켜지길 원할 때 사용합니다."
+            },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
@@ -225,6 +231,8 @@
             { "value": "queue", "name": "큐 (보호 후 한 번에 전송)" }
           ],
           "condition": { "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';" } },
+        { "key": "devices[].resendModeOnPowerOn",
+          "condition": { "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');" } },
 
         { "key": "devices[].coolModeCommand", "type": "select", "required": true,
           "titleMap": [
