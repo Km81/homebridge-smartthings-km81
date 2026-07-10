@@ -137,6 +137,11 @@
               "default": false,
               "description": "잠금 토글(자동건조 매핑)을 홈 앱에서 숨깁니다. 스윙 토글을 숨겼는데도 타일 탭이 전원이 아닌 다른 것을 토글하면 이 옵션도 켜보세요. ('전원 ON 후 자동건조 자동 켜기'는 계속 동작합니다.)"
             },
+            "stateDumpFile": {
+              "title": "[구형 AC] 상태 파일 덤프 경로 (선택)",
+              "type": "string",
+              "description": "설정하면 이 기기의 상태(deviceState 전체)를 지정 경로에 JSON으로 계속 기록합니다(1초 스로틀, 원자적 교체). Home Assistant 등 외부 시스템이 이 기기를 직접 폴링하는 대신 홈브릿지의 캐시를 읽게 하는 용도입니다. 예: /homebridge/legacyac-livingroom.json. 비워두면 꺼짐."
+            },
 
             "deviceLabel": { "title": "[SmartThings] 장치 이름 (SmartThings 레이블)", "type": "string", "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다." },
             "model": { "title": "모델명 (선택)", "type": "string" },
