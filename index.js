@@ -91,7 +91,7 @@ class SmartThingsKM81Platform {
   }
 
   async _didFinishLaunching() {
-    this.log.info('Homebridge 실행 완료. 장치 검색을 시작합니다.');
+    this.log.info('장치 검색 시작');
 
     if (this.devices.length === 0) {
       this.log.warn('설정된 장치(devices)가 없습니다.');
@@ -141,7 +141,7 @@ class SmartThingsKM81Platform {
         this.log.warn('SmartThings에서 어떤 장치도 찾지 못했습니다. 권한이나 연결을 확인해주세요.');
         return false;
       }
-      this.log.info(`총 ${remoteDevices.length}개의 SmartThings 장치를 발견했습니다.`);
+      this.log.info(`SmartThings 장치 ${remoteDevices.length}개 발견`);
 
       for (const configDevice of stDevices) {
         const targetLabel = normalizeKorean(configDevice.deviceLabel);
@@ -158,7 +158,7 @@ class SmartThingsKM81Platform {
           this.log.warn(`'${configDevice.deviceLabel}' 이름과 일치하는 장치가 ${matches.length}개 발견되었습니다. SmartThings 앱에서 장치 이름을 고유하게 변경해주세요. 첫 번째 장치를 사용합니다.`);
         }
         const found = matches[0];
-        this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) 장치를 HomeKit에 추가/갱신합니다.`);
+        this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) HomeKit 추가/갱신`);
         this._bindSmartThingsDevice(found, configDevice);
       }
       return true;
