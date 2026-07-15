@@ -158,6 +158,7 @@ class SmartThingsKM81Platform {
           this.log.warn(`'${configDevice.deviceLabel}' 이름과 일치하는 장치가 ${matches.length}개 발견되었습니다. SmartThings 앱에서 장치 이름을 고유하게 변경해주세요. 첫 번째 장치를 사용합니다.`);
         }
         const found = matches[0];
+        this.smartthings.registerDeviceLabel(found.deviceId, configDevice.deviceLabel); // 로그에 UUID 대신 이름 (v2.1.0)
         this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) HomeKit 추가/갱신`);
         this._bindSmartThingsDevice(found, configDevice);
       }
