@@ -521,12 +521,14 @@ async function R7_stCloudSendCommand() {
   let caught = null;
   try { await failC.setPower('dev-uuid-2', false); } catch (e) { caught = e; }
   const errLine = logs.slice(n2).find(l => l[0] === 'error');
-  const dbgLine = logs.slice(n2).find(l => l[0] === 'debug' && /전송 실패 상세/.test(l[1]));
+  const warnLine = logs.slice(n2).find(l => l[0] === 'warn' && /전송 실패 상세/.test(l[1]));
   t.check('(b) 원본 에러 재전파(상위 재시도 로직 보존)', caught && /422/.test(caught.message), caught && caught.message);
   t.check('(b) 실패 로그에 라벨 + 한국어 명령', !!errLine && /승준 에어컨/.test(errLine[1]) && /전원 → 꺼짐/.test(errLine[1]), errLine && errLine[1]);
-  t.check('(b) 기본 로그레벨에 원인코드 없음 — error 줄에 ConstraintViolationError 미포함',
+  t.check('(b) error 요약 줄은 간결 유지 — ConstraintViolationError 미포함',
     !!errLine && !/ConstraintViolationError/.test(errLine[1]), errLine && errLine[1]);
-  t.check('(b) 원인코드는 debug로만 노출', !!dbgLine && /ConstraintViolationError/.test(dbgLine[1]), dbgLine && dbgLine[1]);
+  // v2.1.3 — 감사 제안 ② 반영: body는 warn으로 기본 레벨에 보인다(라벨 포함).
+  t.check('(b) ★원인코드가 warn으로 기본 레벨에 노출(v2.1.3 재승격)',
+    !!warnLine && /ConstraintViolationError/.test(warnLine[1]) && /승준 에어컨/.test(warnLine[1]), warnLine && warnLine[1]);
 
   // (c) log.debug가 없는 로거에서도 실패 경로가 죽지 않는가 (?. 사용 확인)
   const noDbg = makeClient(async () => { const e = new Error('boom'); e.response = { status: 500, data: { x: 1 } }; throw e; });
@@ -535,23 +537,22 @@ async function R7_stCloudSendCommand() {
   try { await noDbg.setPower('d', false); } catch (e) { c2 = e; }
   t.check('(c) debug 없는 로거로도 실패 경로 정상(원본 에러만 전파)', c2 && c2.message === 'boom', c2 && c2.message);
 
-  // (d) ★구조 취약 실증: POST는 성공했는데 포매터가 던지면?
-  //     포매터 호출이 제어 경로 try 안(캐시 재무효화 예약 앞)에 있어, 성공한 전송이
-  //     '전송 실패'로 오보고되고 1500ms 재무효화가 건너뛰어진다.
-  //     ※ 현 호출자 5종(setPower/setMode/setTemperature/setWindFree/setAutoClean)은
-  //       전부 리터럴 객체를 만들므로 이 경로는 재현되지 않는다 — 구조만 실증.
+  // (d) v2.1.3 — 포매터 선계산+이중 폴백 검증(감사 제안 ③ 반영): 포매터와 JSON.stringify가
+  //     둘 다 던지는 최악 케이스(throwing getter)에서도 전송이 성공으로 유지되고
+  //     1500ms 재무효화까지 정상 예약되는지. (v2.1.1까지는 성공한 전송이 실패로 둔갑
+  //     + 재무효화 스킵 — 이 블록의 옛 단언이 그 취약을 실증했었다.)
   let posted = 0;
   const trapC = makeClient(async () => { posted++; return { status: 200 }; });
   const trap = { component: 'main', command: 'off', get capability() { throw new Error('formatter trap'); } };
   let caught3 = null;
   try { await trapC.sendCommand('dev-trap', trap); } catch (e) { caught3 = e; }
   t.check('(d) POST는 실제로 성공했다', posted === 1);
-  t.check('(d) 그럼에도 예외가 상위로 전파(성공한 전송이 실패로 보고)', !!caught3, caught3 && caught3.message);
-  t.check('(d) 즉시 무효화는 1회뿐 — 1500ms 재무효화 예약 안 됨', trapC._invalidated.length === 1, JSON.stringify(trapC._invalidated));
-  const beforeLen = trapC._invalidated.length;
+  t.check('(d) ★예외 미전파 — 성공한 전송이 성공으로 유지', caught3 === null, caught3 && caught3.message);
+  t.check('(d) ★폴백 요약으로 전송 로그가 남음(직렬화 불가 표기)',
+    logs.some(l => l[0] === 'info' && /직렬화 불가/.test(l[1])));
+  t.check('(d) 즉시 무효화 1회', trapC._invalidated.length === 1, JSON.stringify(trapC._invalidated));
   await sleep(1700);
-  t.check('(d) 1.7초 뒤에도 재무효화 없음(확인)', trapC._invalidated.length === beforeLen);
-  t.note('(d)는 현 호출자 5종에서 재현 불가 — 구조적 취약성 실증용. 결함으로 승격하지 않음.');
+  t.check('(d) ★1500ms 재무효화 예약됨 (총 2회)', trapC._invalidated.length === 2, JSON.stringify(trapC._invalidated));
 
   // (e) getStatus 스트릭 Map이 무한 증식하지 않는가 (기기 3대 상한)
   const stC = Object.create(SmartThingsClient.prototype);

@@ -527,14 +527,15 @@ async function e8() {
     const { c, counts } = makeStClient({ postFails: true });
     c.registerDeviceLabel(DEV, '승준 에어컨');
     const logs = [];
-    c.log = { info: m => logs.push(['info', m]), error: m => logs.push(['error', m]), warn: () => {}, debug: m => logs.push(['debug', m]) };
+    c.log = { info: m => logs.push(['info', m]), error: m => logs.push(['error', m]), warn: m => logs.push(['warn', m]), debug: m => logs.push(['debug', m]) };
     let threw = null;
     try { await c.setPower(DEV, false); } catch (err) { threw = err; }
     e.check('POST 실패가 상위로 전파됨', threw !== null, String(threw && threw.message));
     e.check('실패 로그가 기기 라벨을 사용', logs.some(l => l[0] === 'error' && /승준 에어컨/.test(l[1])), JSON.stringify(logs));
     e.check('실패 로그에 한국어 명령 표기', logs.some(l => l[0] === 'error' && /전원 → 꺼짐/.test(l[1])), JSON.stringify(logs));
-    e.check('에러 본문은 debug로만 (기본 로그레벨에서 원인코드 소실)',
-      logs.some(l => l[0] === 'debug' && /ConstraintViolationError/.test(l[1])) &&
+    // v2.1.3 — 감사 제안 ② 반영: 에러 본문은 warn으로 기본 레벨에 보인다(error 요약 줄은 간결 유지).
+    e.check('에러 본문이 warn으로 기본 레벨에 노출 (v2.1.3 재승격)',
+      logs.some(l => l[0] === 'warn' && /ConstraintViolationError/.test(l[1])) &&
       !logs.some(l => l[0] === 'error' && /ConstraintViolationError/.test(l[1])), JSON.stringify(logs));
     e.measure('실패 시 POST 시도', counts.post);
   }

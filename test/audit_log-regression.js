@@ -209,28 +209,24 @@ async function T5() {
 }
 
 // ================= T6 =================
-// B5(b) 구조 취약 실측: 포매터가 제어 경로 try 안 · 1500ms 재무효화 앞에 있다.
-// 현 호출자로는 도달 불가하므로 "도달했을 때의 결과"만 계측한다(결함 주장 아님, 계측).
+// v2.1.3 — 포매터 선계산+이중 폴백으로 위 취약이 봉합됐는지 실측(감사 제안 ③ 반영 검증).
+// (v2.1.1까지: 포매터가 제어 경로 try 안이라 던지면 성공한 전송이 실패로 둔갑 + 로그 0줄
+//  + 1500ms 재무효화 스킵 — 이 블록의 옛 단언이 그 결함을 문서화했었다.)
 async function T6() {
-  console.log('T6 [계측] 포매터가 던질 때의 결과 — 현 호출자로는 도달 불가');
+  console.log('T6 포매터가 던지는 명령 — v2.1.3: 전송 성공 유지 + 폴백 요약 로그');
   const c = makeClient();
   c.registerDeviceLabel(AC_ID, '승준 에어컨');
   let err = null;
-  try { await c.sendCommand(AC_ID, null); } catch (e) { err = e; }   // commands=[null]
+  try { await c.sendCommand(AC_ID, null); } catch (e) { err = e; }   // commands=[null] — _fmtCommand가 던짐
   const posted = c._logs.some(l => l[0] === 'POST');
   check('POST는 실제로 전송됨(기기에 명령 도달)', posted);
-  check('그럼에도 sendCommand는 reject', err !== null, String(err));
-  console.log(`    실제 rejection: ${err && err.constructor.name}: ${err && err.message}`);
-  // 예측(포매터가 try에서 던져 catch의 "전송 실패" 오탐 로그가 남는다)은 틀렸다.
-  // 실측: catch 안의 _fmtCommands도 같은 이유로 던져 로그가 한 줄도 안 남고 TypeError가 나간다.
-  // v1.8.29 기준선은 이 자리가 JSON.stringify(commands) 라 어느 쪽도 던지지 않았다(git show 6a556a5 확인).
-  check('로그가 한 줄도 남지 않음 (catch의 포매터도 동반 실패)', txt(c).length === 0, JSON.stringify(txt(c)));
-  check('전송 성공했는데 에러가 axios 에러가 아님 (SmartAC가 status로 판정 불가)',
-    err instanceof TypeError && err.response === undefined);
+  check('★sendCommand가 정상 resolve (성공이 실패로 둔갑하지 않음)', err === null, String(err));
+  check('★폴백 요약으로 전송 로그가 남음', txt(c).some(s => s.includes('전송: [null]')), JSON.stringify(txt(c)));
   const delsBefore = c._logs.filter(l => l[0] === 'cacheDel').length;
   await sleep(1700);
-  check('1500ms 2차 무효화 스킵 (POST 앞 1회만) → 캐시 stale 잔존',
-    c._logs.filter(l => l[0] === 'cacheDel').length === delsBefore && delsBefore === 1, String(delsBefore));
+  check('★1500ms 2차 무효화 예약됨 (총 2회)',
+    c._logs.filter(l => l[0] === 'cacheDel').length === 2 && delsBefore === 1,
+    `before=${delsBefore} after=${c._logs.filter(l => l[0] === 'cacheDel').length}`);
 }
 
 // ================= T7 =================
@@ -253,9 +249,10 @@ async function T7() {
 }
 
 // ================= T8 =================
-// 실패 경로 로그: 에러 body가 debug로 강등돼 기본 로그 레벨에서 원인코드가 사라지는지 실측.
+// 실패 경로 로그 — v2.1.3 정책: 에러 body는 warn으로 기본 레벨에서 보인다(감사 제안 ② 반영).
+// (v2.1.1까지는 debug 강등이라 기본 레벨에서 원인코드가 사라졌음 — 감사에서 지적돼 재승격.)
 async function T8() {
-  console.log('T8 sendCommand 실패 로그 — 원인 body 가시성');
+  console.log('T8 sendCommand 실패 로그 — 원인 body 가시성 (v2.1.3: warn 재승격)');
   const body = { error: { code: 'ConstraintViolationError', message: 'device is offline' } };
   const c = makeClient({ postFail: axiosErr(422, body, 'Request failed with status code 422') });
   c.registerDeviceLabel(AC_ID, '승준 에어컨');
@@ -265,9 +262,10 @@ async function T8() {
     err && err.response && err.response.status === 422, String(err && err.message));
   const errLine = lines(c).find(l => l[0] === 'error');
   check('error 라인에 한국어 명령 표기', errLine && errLine[1].includes('[승준 에어컨] 전송 실패: 전원 → 꺼짐'), JSON.stringify(errLine));
-  check('error 라인에 원인 코드 없음(=debug로 강등됨)', errLine && !errLine[1].includes('ConstraintViolationError'), JSON.stringify(errLine));
-  check('원인 코드는 debug 라인에만 존재',
-    lines(c).some(l => l[0] === 'debug' && l[1].includes('ConstraintViolationError')));
+  check('★원인 코드가 기본 레벨(warn)에 보임 — v2.1.3 재승격',
+    lines(c).some(l => l[0] === 'warn' && l[1].includes('ConstraintViolationError')));
+  check('warn 상세 라인에 기기 라벨 표기',
+    lines(c).some(l => l[0] === 'warn' && l[1].includes('[전송 실패 상세] 승준 에어컨')));
   console.log(`    기본 레벨에서 보이는 것: ${errLine && errLine[1]}`);
 }
 
