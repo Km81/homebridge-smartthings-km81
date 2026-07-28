@@ -225,6 +225,12 @@ def drop_session(host, port):
     # v2.2.1 — 반드시 세션 락 안에서 교체한다. 락 없이 닫으면 다른 스레드가 방금 만든
     # 세션을 지우거나, 사용 중인 세션을 닫아 그 스레드가 죽는다(감사 LOW-1).
     k = "%s:%d" % (host, port)
+    # ★v2.3.3 — 학습한 포트 캐시도 함께 버린다(3차 감사 H1).
+    # 이전엔 _resolved_ports에 쓰기만 있고 지우는 경로가 없어, resolve_port가 낡은 포트를
+    # 무조건 최우선 반환했다. 그 결과 JS가 "연속 실패 3회 → 포트 재탐지"를 시도해도
+    # 프로브 루프에 영영 도달하지 못했다 — **처음부터 동작한 적 없는 수정**이었다.
+    # 세션이 끊겼다는 건 그 포트에 대한 신뢰가 깨졌다는 뜻이므로 여기서 버리는 게 맞다.
+    _resolved_ports.pop(host, None)
     with _registry_lock:
         lock = _session_locks.setdefault(k, threading.Lock())
     with lock:
@@ -284,7 +290,12 @@ def handle(req, cert, key):
             drop_session(host, port)
             if i + 1 < attempts:
                 continue
-    return {"id": rid, "ok": False, "error": "%s: %s" % (type(last).__name__, last)}
+    # ★v2.3.3 — 쓰기 실패는 "이미 기기로 나갔을 수 있음"으로 표시한다(3차 감사 H2).
+    # JS가 오류 '문자열'로 결과 불명을 추측하던 것을 대체한다 — 여기 오류는 파이썬이 만든
+    # 영어 메시지라 한국어 정규식에 걸리지 않았고, 그래서 "비멱등 명령은 불명 시 재전송 금지"
+    # 보호가 정작 가장 흔한 실패에서 작동하지 않았다.
+    return {"id": rid, "ok": False, "sent": op == "post",
+            "error": "%s: %s" % (type(last).__name__, last)}
 
 
 def main():

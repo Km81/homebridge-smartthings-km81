@@ -451,6 +451,142 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(/deviceId=\$\{found\.deviceId\}/.test(src), 'deviceId 안내 로그가 없다');
   });
 
+  // ===== 3차 감사 반영 (v2.3.3) =====
+
+  await t('H3 체인 실행 중 도착한 새 외부 호출은 큐를 건너뛰지 않는다', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    const order = [];
+    let n = 0;
+    c._rpc = (p) => {
+      const id = ++n;
+      order.push(`시작${id}`);
+      const delay = id === 1 ? 80 : 5;
+      return new Promise(res => setTimeout(() => { order.push(`끝${id}`); res({ ok: true, code: 68 }); }, delay));
+    };
+    const first = c._post(DEV, ['mode', 'vs', '0'], { m: 1 });
+    // 첫 요청이 RPC를 기다리는 '도중'에 새 외부 호출이 들어온다 — 예전엔 이게 재진입으로
+    // 오인돼 병렬 실행됐고, 끄기 뒤 모드 착탄(재점등) 경로가 열렸다.
+    await new Promise(r => setTimeout(r, 30));
+    const second = c._post(DEV, ['power', 'vs', '0'], { p: 0 });
+    await Promise.all([first, second]);
+    assert.deepStrictEqual(order, ['시작1', '끝1', '시작2', '끝2'],
+      `직렬화 우회 발생: ${order.join(',')}`);
+  });
+
+  await t('H3 체인 내부에서 파생된 호출은 여전히 즉시 실행된다 (교착 없음)', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async (p) => ({
+      ok: true, code: 69,
+      data: p.path[0] === 'power' ? { 'x.com.samsung.da.power': 'On' }
+        : { currentMachineState: 'active', remainingTime: '00:30:00' },
+    });
+    // getStatus는 _withFallback(체인) 안에서 _get을 2번 병렬로 부른다 — 교착되면 타임아웃
+    const st = await Promise.race([
+      c.getStatus(DEV),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('교착')), 2000)),
+    ]);
+    assert.strictEqual(st.main.dryerOperatingState.machineState.value, 'run');
+  });
+
+  await t('H2 브릿지가 sent 플래그를 주면 결과 불명으로 판정한다 (영어 오류도 포착)', async () => {
+    let cloudCalled = false;
+    const c = mkClient({ cloudClient: { setMode: async () => { cloudCalled = true; } } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async () => { const e = new Error('TimeoutError: request timed out'); e.sent = true; throw e; };
+    await assert.rejects(c.setMode(DEV, 'cool'));
+    assert.strictEqual(cloudCalled, false, '결과 불명인데 클라우드로 재전송했다(재점등 위험)');
+  });
+
+  await t('H2 브릿지 실패 응답에 sent 플래그가 실린다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local', 'bridge.py'), 'utf8');
+    assert.ok(/"sent":\s*op == "post"/.test(src), 'bridge.py가 sent 플래그를 돌려주지 않는다');
+  });
+
+  await t('H4 신원 확인 단계 실패는 폴백을 막지 않는다 (명령 미전송이라 안전)', async () => {
+    let cloudCalled = false;
+    const c = mkClient({ cloudClient: { setMode: async () => { cloudCalled = true; return 'cloud'; } } });
+    c.registerDevice(DEV, devInfo);   // _verified 미설정 → 신원 확인부터 수행
+    c._rpc = async (p) => {
+      if (p.path[0] === 'oic') { const e = new Error('로컬 요청 시간 초과'); e.sent = false; throw e; }
+      return { ok: true, code: 68 };
+    };
+    const r = await c.setMode(DEV, 'cool');
+    assert.strictEqual(cloudCalled, true, '명령을 보내지도 않았는데 폴백을 막아 무성 유실이 된다');
+    assert.strictEqual(r, 'cloud');
+  });
+
+  await t('H1 세션 해제 시 학습 포트 캐시도 버린다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local', 'bridge.py'), 'utf8');
+    const fn = src.slice(src.indexOf('def drop_session'), src.indexOf('def handle'));
+    assert.ok(/_resolved_ports\.pop\(host, None\)/.test(fn),
+      '포트 캐시를 지우지 않아 재탐지가 영원히 도달하지 못한다');
+  });
+
+  await t('★세탁물 jobState를 Laundry가 실제로 읽는 키로 내보낸다', async () => {
+    const laundry = fs.readFileSync(path.join(__dirname, '..', 'lib', 'accessories', 'Laundry.js'), 'utf8');
+    const usesDryerJob = /op\.dryerJobState\?\.value/.test(laundry);
+    assert.ok(usesDryerJob, 'Laundry가 읽는 키가 바뀌었다 — 이 테스트를 갱신할 것');
+    const c = mkClient();
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async (p) => ({
+      ok: true, code: 69,
+      data: p.path[0] === 'power' ? { 'x.com.samsung.da.power': 'On' }
+        : { currentMachineState: 'idle', currentJobState: 'WrinklePrevent', remainingTime: '00:20:00' },
+    });
+    const op = (await c.getStatus(DEV)).main.dryerOperatingState;
+    assert.strictEqual(op.dryerJobState.value, 'wrinklePrevent',
+      'Laundry가 읽는 dryerJobState가 비어 있어 조기 종료 알림이 그대로 난다');
+  });
+
+  // ===== v2.3.3 설정 UI 정리 =====
+  await t('타이밍 설정은 초 단위 항목만 UI에 노출한다 (ms는 호환용으로 숨김)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const flat = JSON.stringify(s.layout);
+    for (const k of ['powerOnResendStepSec', 'legacyOnGuardSec', 'timeoutSec', 'cacheDurationSec']) {
+      assert.ok(flat.includes(`devices[].${k}`), `${k}가 UI에 없다`);
+    }
+    for (const k of ['powerOnResendStepMs', 'legacyOnGuardMs', 'timeout', 'cacheDuration']) {
+      assert.ok(!flat.includes(`devices[].${k}"`), `${k}가 아직 UI에 노출된다`);
+      assert.ok(s.schema.properties.devices.items.properties[k], `${k} 스키마가 사라져 기존 설정이 깨진다`);
+    }
+  });
+
+  await t('슬라이더로 그려지는 필드가 없다 (정수+min+max 조합 제거)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const P = s.schema.properties.devices.items.properties;
+    const sliders = Object.entries(P)
+      .filter(([, v]) => (v.type === 'integer' || v.type === 'number')
+        && v.minimum !== undefined && v.maximum !== undefined)
+      .map(([k]) => k);
+    assert.deepStrictEqual(sliders, [], `슬라이더 렌더링 필드: ${sliders.join(', ')}`);
+  });
+
+  await t('전송 경로 선택지가 간결하다', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const titles = s.schema.properties.devices.items.properties.transport.oneOf.map(o => o.title);
+    assert.deepStrictEqual(titles, ['클라우드', '로컬'], `선택지 라벨: ${titles.join(' / ')}`);
+  });
+
+  await t('초 설정이 내부 ms 키로 환산된다 (구형 로직 무변경 유지)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/SEC_TO_MS_KEYS/.test(src) && /normalizeTimingConfig/.test(src), '초→ms 환산 경로가 없다');
+    // 액세서리 파일은 여전히 ms 키만 읽어야 한다(구형 통신 경로 무변경 원칙)
+    const legacy = fs.readFileSync(path.join(__dirname, '..', 'lib', 'accessories', 'LegacyAC.js'), 'utf8');
+    assert.ok(!/Sec\b/.test(legacy.match(/this\.timeout[^\n]*/)?.[0] || ''), 'LegacyAC가 초 키를 직접 읽는다');
+  });
+
+  await t('청정 모드 미지원 기기 안내가 설명에 있다', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const d = s.schema.properties.devices.items.properties.coolModeCommand.description || '';
+    assert.ok(/창문형|청정 계열 모드가 없어/.test(d), '지원하지 않는 모드 안내가 없다');
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();

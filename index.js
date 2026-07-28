@@ -14,6 +14,29 @@ const PACKAGE_ROOT = __dirname;
 
 const normalizeKorean = s => (s || '').normalize('NFC').trim();
 
+// v2.3.3 — 사용자에게는 '초'로 묻고, 내부 코드에는 기존 ms 키로 넘긴다.
+// 왜 이렇게: 밀리초는 사람이 쓰기 불편하고(4000 vs 4) UI도 슬라이더로 그려졌다. 그렇다고
+// 액세서리 코드의 키를 바꾸면 구형 에어컨 로직까지 건드리게 되므로(무변경 원칙),
+// **설정을 읽는 진입점에서만** 초 → ms로 환산해 넘긴다. 기존 ms 설정도 그대로 동작한다.
+const SEC_TO_MS_KEYS = {
+  powerOnResendStepSec: 'powerOnResendStepMs',
+  legacyOnGuardSec: 'legacyOnGuardMs',
+  timeoutSec: 'timeout',
+  cacheDurationSec: 'cacheDuration',
+};
+
+function normalizeTimingConfig(device) {
+  if (!device || typeof device !== 'object') return device;
+  for (const [secKey, msKey] of Object.entries(SEC_TO_MS_KEYS)) {
+    const v = device[secKey];
+    if (v === undefined || v === null || v === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) continue;
+    device[msKey] = Math.round(n * 1000);   // 초 설정이 있으면 그것이 우선
+  }
+  return device;
+}
+
 let Accessory, Service, Characteristic, UUIDGen;
 
 module.exports = (homebridge) => {
@@ -38,7 +61,7 @@ class SmartThingsKM81Platform {
 
     if (!api) return;
 
-    this.devices = Array.isArray(this.config.devices) ? this.config.devices : [];
+    this.devices = (Array.isArray(this.config.devices) ? this.config.devices : []).map(normalizeTimingConfig);
 
     const hasSmartThingsDevices = this.devices.some(d =>
       d && (d.deviceType === 'smartAc' || d.deviceType === 'washer' || d.deviceType === 'dryer')

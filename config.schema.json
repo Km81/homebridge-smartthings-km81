@@ -112,12 +112,14 @@
             "timeout": {
               "title": "[구형 AC] 요청 시간 초과 (ms)",
               "type": "integer",
-              "default": 5000
+              "default": 5000,
+              "description": "(구버전 호환용, 밀리초) 위의 초 단위 항목을 쓰세요. 초 값이 있으면 그쪽이 우선합니다."
             },
             "cacheDuration": {
               "title": "[구형 AC] 캐시 유지 시간 (ms)",
               "type": "integer",
-              "default": 30000
+              "default": 30000,
+              "description": "(구버전 호환용, 밀리초) 위의 초 단위 항목을 쓰세요. 초 값이 있으면 그쪽이 우선합니다."
             },
             "certPath": {
               "title": "[구형 AC] 인증서 경로 (선택)",
@@ -178,7 +180,7 @@
                   ]
                 }
               ],
-              "description": "HomeKit에서 '냉방' 버튼을 누를 때 또는 모드 변경 시 실제 AC에 보낼 모드입니다."
+              "description": "HomeKit '냉방'을 눌렀을 때 구형 에어컨으로 보낼 실제 모드. 구형 2in1은 청정 계열(CoolClean/DryClean)을 지원합니다."
             },
             "legacySwingBinding": {
               "title": "[구형 AC] 스윙(Swing) 토글 ↔ 기능",
@@ -230,9 +232,7 @@
               "title": "[구형 AC] 전원 ON 직후 보호 시간 (ms)",
               "type": "integer",
               "default": 2000,
-              "minimum": 0,
-              "maximum": 10000,
-              "description": "전원을 켠 직후 이 시간 동안은 다른 명령(모드/온도/스윙/잠금)을 실제 기기에 보내지 않습니다. 구형 펌웨어가 동시 명령을 놓치는 것을 막기 위함입니다. 0으로 두면 보호를 끕니다."
+              "description": "(구버전 호환용, 밀리초) 위의 초 단위 항목을 쓰세요. 초 값이 있으면 그쪽이 우선합니다."
             },
             "legacyOnGuardStrategy": {
               "title": "[구형 AC] ON 보호 중 다른 명령 처리",
@@ -276,9 +276,7 @@
               "title": "[AC 공통] 후속 재전송 단계 간격 (ms)",
               "type": "integer",
               "default": 2000,
-              "minimum": 1000,
-              "maximum": 10000,
-              "description": "전원 ON 후속 재전송 체인(모드 → 자동건조 → 스윙 끄기)의 각 단계 사이 간격입니다. 명령을 자주 놓치는 반응 느린 기기는 4000 정도로 늘려보세요."
+              "description": "(구버전 호환용, 밀리초) 위의 초 단위 항목을 쓰세요. 초 값이 있으면 그쪽이 우선합니다."
             },
             "hideSwingToggle": {
               "title": "[구형 AC] 스윙 토글 HomeKit에서 숨기기",
@@ -339,7 +337,8 @@
                     "dryClean"
                   ]
                 }
-              ]
+              ],
+              "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 실제 모드. ⚠️기기가 지원하지 않는 모드를 고르면 무시되거나 근사값으로 전송됩니다 — 예: 창문형(윈도우핏)은 청정 계열 모드가 없어 냉방청정→냉방, 제습청정→제습으로 나갑니다. 기기가 지원하는 모드는 SmartThings 앱에서 확인하세요."
             },
             "swingBinding": {
               "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
@@ -425,13 +424,13 @@
               "default": "cloud",
               "oneOf": [
                 {
-                  "title": "클라우드 (SmartThings API — 기본)",
+                  "title": "클라우드",
                   "enum": [
                     "cloud"
                   ]
                 },
                 {
-                  "title": "로컬 (DTLS-CoAP 직접통신 — 2023년 이후 기기)",
+                  "title": "로컬",
                   "enum": [
                     "local"
                   ]
@@ -439,7 +438,8 @@
               ],
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
-              }
+              },
+              "description": "클라우드 = SmartThings API 경유(기본). 로컬 = 기기와 LAN에서 직접 통신(2023년 이후 삼성 가전). 로컬을 고르면 아래에 기기 IP 칸이 나옵니다."
             },
             "local": {
               "title": "로컬 전송 설정",
@@ -478,6 +478,30 @@
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               }
+            },
+            "powerOnResendStepSec": {
+              "title": "[AC 공통] 후속 재전송 간격 (초)",
+              "type": "number",
+              "placeholder": "4",
+              "description": "전원 ON 후속 체인(모드 → 자동건조)의 단계 사이 간격. 비워두면 2초. 명령을 자주 놓치는 느린 기기는 4초 정도로 늘리세요."
+            },
+            "legacyOnGuardSec": {
+              "title": "[구형 AC] 전원 ON 직후 보호 시간 (초)",
+              "type": "number",
+              "placeholder": "2",
+              "description": "켠 직후 이 시간 동안 들어오는 다른 명령을 무시합니다(기기가 놓치는 것을 방지). 비워두면 2초."
+            },
+            "timeoutSec": {
+              "title": "[구형 AC] 요청 시간 초과 (초)",
+              "type": "number",
+              "placeholder": "5",
+              "description": "기기 응답을 기다리는 최대 시간. 비워두면 5초."
+            },
+            "cacheDurationSec": {
+              "title": "[구형 AC] 상태 캐시 유지 (초)",
+              "type": "number",
+              "placeholder": "30",
+              "description": "이 시간 안에는 기기를 다시 조회하지 않고 마지막 값을 씁니다. 비워두면 30초."
             }
           },
           "required": [
@@ -574,13 +598,15 @@
           }
         },
         {
-          "key": "devices[].timeout",
+          "key": "devices[].timeoutSec",
+          "type": "number",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
           }
         },
         {
-          "key": "devices[].cacheDuration",
+          "key": "devices[].cacheDurationSec",
+          "type": "number",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
           }
@@ -729,7 +755,8 @@
           }
         },
         {
-          "key": "devices[].legacyOnGuardMs",
+          "key": "devices[].legacyOnGuardSec",
+          "type": "number",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
           }
@@ -770,7 +797,8 @@
           }
         },
         {
-          "key": "devices[].powerOnResendStepMs",
+          "key": "devices[].powerOnResendStepSec",
+          "type": "number",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
           }
