@@ -25,7 +25,7 @@
         "title": "Redirect URI",
         "type": "string",
         "default": "https://myhome.example.com",
-        "description": "SmartThings에 등록한 https Redirect URI (포트 없이 도메인만, 예: https://myhome.example.com). 외부 443 포트가 리버스 프록시를 거쳐 내부 http://<homebridge_ip>:8999 로 전달되어야 합니다."
+        "description": "SmartThings 앱 등록 시 넣은 리디렉션 주소와 같아야 합니다."
       },
       "temperatureMin": {
         "title": "기본 목표온도 최소값(℃) — SmartAC 공용",
@@ -55,31 +55,32 @@
               "default": "smartAc",
               "oneOf": [
                 {
-                  "title": "구형 에어컨 (Samsung Legacy, TLSv1 직접통신)",
+                  "title": "구형 에어컨",
                   "enum": [
                     "legacyAc"
                   ]
                 },
                 {
-                  "title": "신형 에어컨 (SmartThings)",
+                  "title": "신형 에어컨",
                   "enum": [
                     "smartAc"
                   ]
                 },
                 {
-                  "title": "세탁기 (SmartThings)",
+                  "title": "세탁기",
                   "enum": [
                     "washer"
                   ]
                 },
                 {
-                  "title": "건조기 (SmartThings)",
+                  "title": "건조기",
                   "enum": [
                     "dryer"
                   ]
                 }
               ],
-              "required": true
+              "required": true,
+              "description": "구형 = 2in1 등 SmartThings 이전 모델(직접 통신). 그 외는 SmartThings 기기."
             },
             "name": {
               "title": "[구형 AC] 액세서리 이름",
@@ -107,7 +108,7 @@
             "pollingInterval": {
               "title": "[AC 공통] 상태 폴링 간격 (초)",
               "type": "integer",
-              "description": "구형 AC: 비워두면 폴링 안 함. 신형 AC: 비워두면 30초로 자동 폴링 (SmartThings 앱/리모컨에서 변경한 상태를 HomeKit에 반영). 신형 AC 최소 10초까지 허용되며 더 낮은 값은 10초로 올림됩니다. 0을 입력하면 신형 AC 폴링을 끕니다."
+              "description": "기기 상태를 다시 읽는 주기. 비워두면 신형 30초 / 구형은 폴링 안 함."
             },
             "timeout": {
               "title": "[구형 AC] 요청 시간 초과 (ms)",
@@ -151,36 +152,36 @@
               "default": 30
             },
             "hkCoolMode": {
-              "title": "[구형 AC] HomeKit '냉방(COOL)' 전송 모드",
+              "title": "[구형 AC] 냉방 버튼 → 보낼 모드",
               "type": "string",
               "default": "Cool",
               "oneOf": [
                 {
-                  "title": "냉방 (Cool) 명령",
+                  "title": "냉방",
                   "enum": [
                     "Cool"
                   ]
                 },
                 {
-                  "title": "냉방청정 (CoolClean) 명령",
+                  "title": "냉방청정",
                   "enum": [
                     "CoolClean"
                   ]
                 },
                 {
-                  "title": "제습 (Dry) 명령",
+                  "title": "제습",
                   "enum": [
                     "Dry"
                   ]
                 },
                 {
-                  "title": "제습청정 (DryClean) 명령",
+                  "title": "제습청정",
                   "enum": [
                     "DryClean"
                   ]
                 }
               ],
-              "description": "HomeKit '냉방'을 눌렀을 때 구형 에어컨으로 보낼 실제 모드. 구형 2in1은 청정 계열(CoolClean/DryClean)을 지원합니다."
+              "description": "HomeKit '냉방'을 눌렀을 때 구형 에어컨으로 보낼 모드."
             },
             "legacySwingBinding": {
               "title": "[구형 AC] 스윙(Swing) 토글 ↔ 기능",
@@ -188,13 +189,13 @@
               "default": "comfort",
               "oneOf": [
                 {
-                  "title": "무풍 (Comfort)",
+                  "title": "무풍",
                   "enum": [
                     "comfort"
                   ]
                 },
                 {
-                  "title": "상하 바람 (Wind)",
+                  "title": "상하 바람",
                   "enum": [
                     "wind"
                   ]
@@ -214,7 +215,7 @@
               "default": "autoClean",
               "oneOf": [
                 {
-                  "title": "자동건조 (AutoClean)",
+                  "title": "자동건조",
                   "enum": [
                     "autoClean"
                   ]
@@ -240,37 +241,37 @@
               "default": "drop",
               "oneOf": [
                 {
-                  "title": "무시 (드롭) — 손으로 켜고 사용",
+                  "title": "무시",
                   "enum": [
                     "drop"
                   ]
                 },
                 {
-                  "title": "큐 — 자동화/Siri 일괄 동작",
+                  "title": "끝난 뒤 전송",
                   "enum": [
                     "queue"
                   ]
                 }
               ],
-              "description": "ON 명령 직후 들어오는 모드/온도/스윙/잠금 명령을 어떻게 다룰지 선택합니다. 일반적으로 손으로 켜는 사용 패턴이면 '무시'가 안전하고, HomeKit 자동화로 '켜고 26도로' 같은 일괄 동작을 쓴다면 '큐'를 권장합니다."
+              "description": "보호 시간 중 들어온 명령을 버릴지, 끝난 뒤 보낼지."
             },
             "resendModeOnPowerOn": {
               "title": "[AC 공통] 전원 ON 후 설정 모드 자동 재전송",
               "type": "boolean",
               "default": false,
-              "description": "전원을 켤 때마다 약 2초 뒤 설정된 모드(구형: 'HomeKit 냉방 매핑', 신형: '냉방 전송 모드')를 자동으로 1회 더 보냅니다. 켜는 순간의 모드 명령은 기기가 무시하거나 HomeKit이 아예 보내지 않는 경우가 있어, 항상 설정 모드(예: 제습청정 DryClean)로 켜지길 원할 때 사용합니다."
+              "description": "켤 때마다 설정 모드를 한 번 더 보냅니다(기기가 첫 명령을 놓치는 경우 대비)."
             },
             "resendAutoCleanOnPowerOn": {
               "title": "[AC 공통] 전원 ON 후 자동건조 자동 켜기",
               "type": "boolean",
               "default": false,
-              "description": "전원을 켤 때마다 자동건조(AutoClean)를 자동으로 켭니다. '설정 모드 자동 재전송'과 함께 쓰면 전원 → 모드 → 자동건조 순서로 전송됩니다(구형 기기가 짧은 간격의 다중 명령을 놓치는 것을 피하기 위한 간격)."
+              "description": "켤 때마다 자동건조를 켭니다."
             },
             "resendSwingOffOnPowerOn": {
               "title": "[구형 AC] 전원 ON 후 스윙(회전) 자동 끄기",
               "type": "boolean",
               "default": false,
-              "description": "일부 기기(특히 벽걸이형)는 켜질 때/모드 변경 때 스스로 회전을 켭니다. 이 옵션을 켜면 후속 재전송 체인 마지막에 스윙 끄기 명령을 보내 항상 회전 꺼짐 상태로 시작합니다."
+              "description": "켤 때마다 스윙을 끕니다."
             },
             "powerOnResendStepMs": {
               "title": "[AC 공통] 후속 재전송 단계 간격 (ms)",
@@ -282,23 +283,23 @@
               "title": "[구형 AC] 스윙 토글 HomeKit에서 숨기기",
               "type": "boolean",
               "default": false,
-              "description": "iOS 홈 앱이 에어컨 타일 탭의 기본 동작으로 전원 대신 스윙 토글을 고르는 경우가 있습니다. 이 옵션을 켜면 스윙 토글이 홈 앱에서 사라져 탭이 항상 전원 켜기/끄기로 동작합니다. ('전원 ON 후 스윙 자동 끄기' 등 내부 동작은 유지됩니다.)"
+              "description": "스윙 토글을 숨깁니다."
             },
             "hideLockToggle": {
-              "title": "[구형 AC] 잠금(자동건조) 토글 HomeKit에서 숨기기",
+              "title": "[구형 AC] 잠금 토글 숨기기",
               "type": "boolean",
               "default": false,
-              "description": "잠금 토글(자동건조 매핑)을 홈 앱에서 숨깁니다. 스윙 토글을 숨겼는데도 타일 탭이 전원이 아닌 다른 것을 토글하면 이 옵션도 켜보세요. ('전원 ON 후 자동건조 자동 켜기'는 계속 동작합니다.)"
+              "description": "잠금 토글을 숨깁니다."
             },
             "stateDumpFile": {
               "title": "[구형 AC] 상태 파일 덤프 경로 (선택)",
               "type": "string",
-              "description": "설정하면 이 기기의 상태(deviceState 전체)를 지정 경로에 JSON으로 계속 기록합니다(1초 스로틀, 원자적 교체). Home Assistant 등 외부 시스템이 이 기기를 직접 폴링하는 대신 홈브릿지의 캐시를 읽게 하는 용도입니다. 예: /homebridge/legacyac-livingroom.json. 비워두면 꺼짐."
+              "description": "기기 상태를 이 파일로 내보냅니다(HA 등 외부에서 읽기용)."
             },
             "deviceLabel": {
-              "title": "[SmartThings] 장치 이름 (SmartThings 레이블)",
+              "title": "[SmartThings] 장치 이름",
               "type": "string",
-              "description": "SmartThings 앱에 등록된 이름과 정확히 일치해야 합니다."
+              "description": "SmartThings 앱에 등록된 이름과 정확히 같아야 합니다."
             },
             "model": {
               "title": "모델명 (선택)",
@@ -309,36 +310,36 @@
               "type": "string"
             },
             "coolModeCommand": {
-              "title": "[신형 AC] HomeKit '냉방(COOL)' 전송 모드",
+              "title": "[신형 AC] 냉방 버튼 → 보낼 모드",
               "type": "string",
               "default": "cool",
               "oneOf": [
                 {
-                  "title": "냉방 (Cool) 명령",
+                  "title": "냉방",
                   "enum": [
                     "cool"
                   ]
                 },
                 {
-                  "title": "냉방청정 (CoolClean) 명령",
-                  "enum": [
-                    "coolClean"
-                  ]
-                },
-                {
-                  "title": "제습 (Dry) 명령",
+                  "title": "제습",
                   "enum": [
                     "dry"
                   ]
                 },
                 {
-                  "title": "제습청정 (DryClean) 명령",
+                  "title": "송풍",
                   "enum": [
-                    "dryClean"
+                    "fan"
+                  ]
+                },
+                {
+                  "title": "AI 쾌적",
+                  "enum": [
+                    "aIComfort"
                   ]
                 }
               ],
-              "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 실제 모드. ⚠️기기가 지원하지 않는 모드를 고르면 무시되거나 근사값으로 전송됩니다 — 예: 창문형(윈도우핏)은 청정 계열 모드가 없어 냉방청정→냉방, 제습청정→제습으로 나갑니다. 기기가 지원하는 모드는 SmartThings 앱에서 확인하세요."
+              "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 모드."
             },
             "swingBinding": {
               "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
@@ -346,7 +347,7 @@
               "default": "windFree",
               "oneOf": [
                 {
-                  "title": "무풍 (WindFree)",
+                  "title": "무풍",
                   "enum": [
                     "windFree"
                   ]
@@ -365,7 +366,7 @@
               "default": "autoClean",
               "oneOf": [
                 {
-                  "title": "자동건조 (Auto Clean)",
+                  "title": "자동건조",
                   "enum": [
                     "autoClean"
                   ]
@@ -381,12 +382,14 @@
             "exposeWindFreeSwitch": {
               "title": "[신형 AC] 무풍 별도 스위치 노출",
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "무풍을 별도 스위치로도 노출합니다."
             },
             "exposeAutoCleanSwitch": {
               "title": "[신형 AC] 자동건조 별도 스위치 노출",
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "자동건조를 별도 스위치로도 노출합니다."
             },
             "temperatureMin": {
               "title": "[신형 AC] 목표온도 최소값 (°C)",
@@ -404,7 +407,7 @@
               "title": "[세탁/건조기] 종료 알림 센서 활성화",
               "type": "boolean",
               "default": false,
-              "description": "운전 종료 시 iOS 푸시 알림을 받기 위한 가상 모션 센서를 노출합니다. (HomeKit 자동화 트리거로도 사용 가능)"
+              "description": "운전이 끝나면 홈킷 알림을 보낼 모션 센서를 만듭니다."
             },
             "sensorName": {
               "title": "[세탁/건조기] 종료 알림 센서 이름",
@@ -416,7 +419,7 @@
               "type": "integer",
               "default": 30,
               "minimum": 5,
-              "description": "운전 종료를 감지하기 위해 SmartThings 상태를 확인하는 주기입니다."
+              "description": "운전 종료를 감지하는 확인 주기."
             },
             "transport": {
               "title": "전송 경로",
@@ -439,7 +442,8 @@
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               },
-              "description": "클라우드 = SmartThings API 경유(기본). 로컬 = 기기와 LAN에서 직접 통신(2023년 이후 삼성 가전). 로컬을 고르면 아래에 기기 IP 칸이 나옵니다."
+              "description": "로컬 = 기기와 LAN에서 직접 통신 (2023년 이후 삼성 가전).",
+              "required": true
             },
             "local": {
               "title": "로컬 전송 설정",
@@ -450,23 +454,24 @@
                   "type": "string",
                   "placeholder": "192.168.1.78",
                   "required": false,
-                  "description": "공유기에서 고정 IP(주소예약)로 잡아두세요. 포트는 자동으로 찾습니다."
+                  "description": "공유기에서 고정 IP로 잡아두세요. 포트는 자동으로 찾습니다."
                 },
                 "port": {
                   "title": "DTLS 포트 (선택)",
                   "type": "integer",
-                  "description": "(고급) 비워두면 49152~49160을 훑어 자동 탐지합니다. 보통 건드릴 필요 없습니다.",
+                  "description": "(고급) 비워두면 자동 탐지.",
                   "placeholder": "비워두면 자동 탐지"
                 },
                 "localPort": {
                   "title": "고정 송신 포트 (선택)",
                   "type": "integer",
-                  "description": "(고급) 비워두면 기기 IP로부터 자동 결정합니다. 재시작 시 유령 세션 방지를 위해 항상 같은 값을 씁니다."
+                  "description": "(고급) 비워두면 기기 IP로부터 자동 결정."
                 },
                 "fallbackToCloud": {
                   "title": "로컬 실패 시 클라우드로 폴백",
                   "type": "boolean",
-                  "default": true
+                  "default": true,
+                  "description": "로컬이 실패하면 클라우드로 대신 처리합니다."
                 }
               }
             },
@@ -474,7 +479,7 @@
               "title": "SmartThings deviceId (선택)",
               "type": "string",
               "placeholder": "3ea2a924-ec77-9f1e-8d4f-1900d3f3e791",
-              "description": "적어두면 부팅할 때 SmartThings 클라우드 조회를 건너뜁니다(2026-10 API 유료화 대비). 값은 홈브릿지 로그의 \"↳ deviceId=...\" 줄에서 복사하세요. 비워두면 기존처럼 장치 이름으로 찾습니다.",
+              "description": "비워두면 장치 이름으로 찾습니다. 적어두면 부팅이 빨라지고 클라우드 조회를 건너뜁니다.",
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               }
@@ -483,25 +488,25 @@
               "title": "[AC 공통] 후속 재전송 간격 (초)",
               "type": "number",
               "placeholder": "4",
-              "description": "전원 ON 후속 체인(모드 → 자동건조)의 단계 사이 간격. 비워두면 2초. 명령을 자주 놓치는 느린 기기는 4초 정도로 늘리세요."
+              "description": "전원 ON 후속 체인(모드 → 자동건조)의 단계 간격. 비워두면 2초."
             },
             "legacyOnGuardSec": {
               "title": "[구형 AC] 전원 ON 직후 보호 시간 (초)",
               "type": "number",
               "placeholder": "2",
-              "description": "켠 직후 이 시간 동안 들어오는 다른 명령을 무시합니다(기기가 놓치는 것을 방지). 비워두면 2초."
+              "description": "켠 직후 이 시간 동안 다른 명령을 무시합니다. 비워두면 2초."
             },
             "timeoutSec": {
               "title": "[구형 AC] 요청 시간 초과 (초)",
               "type": "number",
               "placeholder": "5",
-              "description": "기기 응답을 기다리는 최대 시간. 비워두면 5초."
+              "description": "기기 응답 대기 최대 시간. 비워두면 5초."
             },
             "cacheDurationSec": {
               "title": "[구형 AC] 상태 캐시 유지 (초)",
               "type": "number",
               "placeholder": "30",
-              "description": "이 시간 안에는 기기를 다시 조회하지 않고 마지막 값을 씁니다. 비워두면 30초."
+              "description": "이 시간 안에는 마지막 값을 재사용합니다. 비워두면 30초."
             }
           },
           "required": [

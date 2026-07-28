@@ -581,10 +581,13 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(!/Sec\b/.test(legacy.match(/this\.timeout[^\n]*/)?.[0] || ''), 'LegacyAC가 초 키를 직접 읽는다');
   });
 
-  await t('청정 모드 미지원 기기 안내가 설명에 있다', () => {
+  await t('신형 AC 모드 목록이 기기 실제 지원값과 일치한다', () => {
     const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
-    const d = s.schema.properties.devices.items.properties.coolModeCommand.description || '';
-    assert.ok(/창문형|청정 계열 모드가 없어/.test(d), '지원하지 않는 모드 안내가 없다');
+    const modes = s.schema.properties.devices.items.properties.coolModeCommand.oneOf.flatMap(o => o.enum);
+    // 신형 AC가 실제로 보고하는 supportedAcModes(aIComfort·cool·dry·fan)만 노출해야 한다.
+    // 청정 계열은 구형 2in1 전용이라 목록에 두면 '없는 걸 고르게' 만든다(사용자 지적).
+    assert.deepStrictEqual(modes.sort(), ['aIComfort','cool','dry','fan'].sort(),
+      '신형 AC 모드 목록이 기기 실제 지원값과 다르다: '+modes.join(','));
   });
 
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
