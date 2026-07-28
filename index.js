@@ -137,19 +137,28 @@ class SmartThingsKM81Platform {
       }
     }
 
+    // ★init()은 '디스크의 토큰을 읽는' 단계이지 API 호출이 아니다. deviceId로 전부 연결됐다고
+    // 이걸 건너뛰면 토큰이 메모리에 없어 클라우드 경로가 통째로 죽는다 —
+    // 클라우드 전송 기기(세탁기)의 폴링은 물론 **로컬 실패 시 폴백까지** 못 쓴다.
+    // (v2.3.0에서 실제로 그렇게 만들었다가 세탁기 '폴링 실패 누적'으로 발견 → v2.3.1에서 수정)
+    // 바인딩 직후 폴링이 시작되므로 토큰 로드는 반드시 그 '전에' 끝나야 한다.
+    let hasToken = false;
+    if (stDevices.length > 0 && this.smartthings) {
+      hasToken = await this.smartthings.init();
+    }
+
     // v2.3.0 — config에 deviceId가 적힌 기기는 클라우드 조회 없이 바로 붙인다.
     // 모든 기기에 적어두면 부팅에도 SmartThings API를 한 번도 쓰지 않는다(유료화 대비).
     const needDiscovery = this._bindByConfiguredIds(stDevices);
 
     let stDiscoverySucceeded = needDiscovery.length === 0;
-    if (needDiscovery.length > 0 && this.smartthings) {
-      const hasToken = await this.smartthings.init();
+    if (stDevices.length > 0 && this.smartthings) {
       if (!hasToken) {
         this.oauthServer.start(async () => {
           const ok = await this._discoverAndBindSmartThings(needDiscovery);
           if (ok) this._cleanupStaleAccessories();
         });
-      } else {
+      } else if (needDiscovery.length > 0) {
         stDiscoverySucceeded = await this._discoverAndBindSmartThings(needDiscovery);
       }
     }

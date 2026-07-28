@@ -398,6 +398,21 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
       '클라우드 조회에 전체 목록을 넘기고 있다(생략 효과 없음)');
   });
 
+  // v2.3.1 — v2.3.0에서 낸 회귀. init()은 토큰을 디스크에서 읽는 단계라, deviceId로 전부
+  // 연결됐다고 건너뛰면 클라우드 전송 기기 폴링과 '로컬 실패 시 폴백'이 통째로 죽는다.
+  await t('deviceId로 전부 연결돼도 OAuth 토큰 로드(init)는 건너뛰지 않는다', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const block = src.slice(src.indexOf('let hasToken = false;'), src.indexOf('// SmartThings 검색이 실패'));
+    assert.ok(/if \(stDevices\.length > 0 && this\.smartthings\)/.test(block),
+      'init() 호출 조건이 needDiscovery에 묶여 있다 — 토큰이 로드되지 않아 폴백이 죽는다');
+    assert.ok(/hasToken = await this\.smartthings\.init\(\)/.test(block), 'init() 호출이 사라졌다');
+    // 바인딩 직후 폴링이 시작되므로 토큰 로드가 먼저여야 한다(첫 폴링 실패 방지)
+    assert.ok(src.indexOf('hasToken = await this.smartthings.init()') < src.indexOf('_bindByConfiguredIds(stDevices)'),
+      '토큰 로드가 바인딩보다 늦다 — 첫 폴링이 실패한다');
+    assert.ok(/else if \(needDiscovery\.length > 0\)/.test(block),
+      '토큰이 있을 때 조회 대상이 없어도 getDevices를 부르고 있다(클라우드 생략 효과 상실)');
+  });
+
   await t('검색 성공 시 deviceId를 로그로 안내한다 (config에 옮겨 적을 수 있게)', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     assert.ok(/deviceId=\$\{found\.deviceId\}/.test(src), 'deviceId 안내 로그가 없다');
