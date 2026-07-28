@@ -2,6 +2,7 @@
 
 const pkg = require('./package.json');
 const SmartThingsClient = require('./lib/api/SmartThingsClient');
+const LocalApplianceClient = require('./lib/api/LocalApplianceClient');
 const OAuthServer = require('./lib/auth/OAuthServer');
 const LegacyAC = require('./lib/accessories/LegacyAC');
 const SmartAC = require('./lib/accessories/SmartAC');
@@ -110,6 +111,23 @@ class SmartThingsKM81Platform {
     const stDevices = this.devices.filter(d =>
       d?.deviceType === 'smartAc' || d?.deviceType === 'washer' || d?.deviceType === 'dryer'
     );
+
+    // 2-a) 로컬 전송(DTLS-CoAP)을 쓰는 기기가 있으면 브릿지를 먼저 띄운다.
+    // 실패해도 치명적이지 않다 — 각 기기는 클라우드로 폴백한다.
+    const localDevices = stDevices.filter(d => d?.transport === 'local');
+    if (localDevices.length > 0) {
+      this.localClient = new LocalApplianceClient(this.log, {
+        cloudClient: this.smartthings,
+        pythonBin: this.config.localPythonBin || undefined,
+        stateDir: this.config.localStateDir || undefined,
+      });
+      this.registerShutdown(() => this.localClient.stop());
+      try {
+        await this.localClient.start();
+      } catch (e) {
+        this.log.error(`로컬 브릿지 기동 실패 — 해당 기기는 클라우드로 동작합니다: ${e.message}`);
+      }
+    }
 
     let stDiscoverySucceeded = stDevices.length === 0;
     if (stDevices.length > 0 && this.smartthings) {
@@ -240,18 +258,42 @@ class SmartThingsKM81Platform {
     }
     this._boundAccessoryIds.add(uuid);
 
+    // 전송 경로 선택: transport='local'이면 DTLS-CoAP 클라이언트를, 아니면 기존 클라우드를 쓴다.
+    // 액세서리 코드는 두 클라이언트의 메서드 시그니처가 같아 아무 변경이 없다.
+    const client = this._clientFor(configDevice, device.deviceId);
+
     if (configDevice.deviceType === 'smartAc') {
-      const ac = new SmartAC({ log: this.log, api: this.api, smartthings: this.smartthings, platform: this });
+      const ac = new SmartAC({ log: this.log, api: this.api, smartthings: client, platform: this });
       ac.configure(accessory, configDevice, pkg.version);
     } else if (configDevice.deviceType === 'washer' || configDevice.deviceType === 'dryer') {
       const laundry = new Laundry({
-        log: this.log, api: this.api, smartthings: this.smartthings, platform: this,
+        log: this.log, api: this.api, smartthings: client, platform: this,
         deviceKind: configDevice.deviceType
       });
       laundry.configure(accessory, configDevice, pkg.version);
     } else {
       this.log.warn(`알 수 없는 deviceType: ${configDevice.deviceType}`);
     }
+  }
+
+  // transport 설정에 따라 이 기기가 쓸 클라이언트를 고른다.
+  // 로컬을 요청했는데 브릿지가 못 떴거나 host/port가 없으면 조용히 클라우드로 내린다.
+  _clientFor(configDevice, deviceId) {
+    if (configDevice.transport !== 'local') return this.smartthings;
+    const cfg = configDevice.local || {};
+    if (!this.localClient || !cfg.host || !cfg.port) {
+      this.log.warn(`[${configDevice.deviceLabel}] 로컬 전송을 요청했지만 준비되지 않아 클라우드로 동작합니다 (host/port 확인).`);
+      return this.smartthings;
+    }
+    this.localClient.registerDevice(deviceId, {
+      host: cfg.host,
+      port: Number(cfg.port),
+      localPort: cfg.localPort ? Number(cfg.localPort) : undefined,
+      label: configDevice.deviceLabel,
+      kind: configDevice.deviceType,
+      fallbackToCloud: cfg.fallbackToCloud !== false,
+    });
+    return this.localClient;
   }
 
   _cleanupStaleAccessories() {
