@@ -122,10 +122,18 @@ class SmartThingsKM81Platform {
         stateDir: this.config.localStateDir || undefined,
       });
       this.registerShutdown(() => this.localClient.stop());
+      // v2.2.1 — 브릿지 기동이 기기 바인딩을 막지 않게 상한을 둔다(감사 HIGH-3).
+      // 여기서 오래 붙들리면 캐시 복원된 액세서리에 HomeKit 리스너가 안 붙어,
+      // 홈킷 조작이 "수락된 것처럼 보이지만 아무 일도 안 일어나는" 무성 유실이 된다.
+      const LOCAL_START_BUDGET_MS = 20000;
       try {
-        await this.localClient.start();
+        await Promise.race([
+          this.localClient.start(),
+          new Promise((_, rej) => setTimeout(
+            () => rej(new Error(`기동 대기 ${LOCAL_START_BUDGET_MS / 1000}초 초과`)), LOCAL_START_BUDGET_MS)),
+        ]);
       } catch (e) {
-        this.log.error(`로컬 브릿지 기동 실패 — 해당 기기는 클라우드로 동작합니다: ${e.message}`);
+        this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
       }
     }
 

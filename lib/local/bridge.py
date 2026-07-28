@@ -145,8 +145,13 @@ def session_for(host, port, cert, key, local_port=None):
 
 
 def drop_session(host, port):
+    # v2.2.1 — 반드시 세션 락 안에서 교체한다. 락 없이 닫으면 다른 스레드가 방금 만든
+    # 세션을 지우거나, 사용 중인 세션을 닫아 그 스레드가 죽는다(감사 LOW-1).
     k = "%s:%d" % (host, port)
-    s = _sessions.pop(k, None)
+    with _registry_lock:
+        lock = _session_locks.setdefault(k, threading.Lock())
+    with lock:
+        s = _sessions.pop(k, None)
     if s is not None:
         try:
             s.close()
@@ -162,7 +167,11 @@ def handle(req, cert, key):
         return {"id": rid, "ok": True, "data": {"sessions": list(_sessions)}}
     host, port = req["host"], int(req["port"])
     path = req["path"]
-    attempts = 2  # 세션이 끊겼으면 1회 재연결 후 재시도
+    # v2.2.1 — ★쓰기는 절대 재시도하지 않는다(감사 HIGH-2).
+    # 재시도가 늦게 성공하면 그 사이 도착한 OFF보다 뒤에 착탄해, 꺼진 에어컨에 모드 명령이
+    # 들어가 재점등한다(실측된 현상). 클라우드 경로도 같은 이유로 비멱등 POST 재시도를 금지한다.
+    # 읽기만 세션 끊김 대비 1회 재연결한다.
+    attempts = 1 if op == "post" else 2
     last = None
     for i in range(attempts):
         try:
@@ -175,6 +184,12 @@ def handle(req, cert, key):
                 else:
                     return {"id": rid, "ok": False, "error": "알 수 없는 op: %s" % op}
             data = cbor2.loads(body) if body else None
+            # v2.2.1 — ★CoAP 응답코드를 반드시 판정한다(감사 HIGH-1).
+            # 라이브러리는 4.xx/5.xx를 예외가 아니라 반환값으로 준다. 이걸 성공으로 넘기면
+            # 기기가 거부한 '끄기'가 성공으로 보고돼 재시도·폴백이 전부 무력화된다.
+            if not (64 <= code <= 95):   # 2.00~2.31 이외는 실패
+                return {"id": rid, "ok": False, "code": code,
+                        "error": "CoAP %d.%02d 응답" % (code >> 5, code & 31)}
             return {"id": rid, "ok": True, "code": code, "data": data}
         except Exception as e:
             last = e

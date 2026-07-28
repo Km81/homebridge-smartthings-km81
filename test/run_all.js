@@ -25,6 +25,7 @@ const SUITES = [
   { file: 'audit_cloud-oauth.js' },
   { file: 'audit_efficiency.js', nodeArgs: ['--expose-gc'] },
   { file: 'audit_robustness.js' },
+  { file: 'audit_local-transport.js' },
 ];
 
 const t0 = Date.now();
