@@ -346,6 +346,39 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.strictEqual(c._verified.get(DEV), false);
   });
 
+  // v2.3.2 — 세탁물 액세서리는 밸브(잔여시간)+움직임센서(종료알림) 구성이라
+  // machineState 매핑이 종료 알림 시점을 좌우한다.
+  await t('켜져 있는데 idle이면 stop으로 단정하지 않는다 (안티주름 조기 종료 방지)', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async (p) => ({
+      ok: true, code: 69,
+      data: p.path[0] === 'power'
+        ? { 'x.com.samsung.da.power': 'On' }
+        : { currentMachineState: 'idle', currentJobState: 'WrinklePrevent', remainingTime: '00:20:00' },
+    });
+    const st = await c.getStatus(DEV);
+    const op = st.main.dryerOperatingState;
+    assert.strictEqual(op.machineState.value, 'on', 'idle을 stop으로 단정해 종료로 확정된다');
+    assert.strictEqual(op.jobState.value, 'wrinklePrevent', 'jobState가 전달되지 않는다');
+  });
+
+  await t('일시정지 중에도 잔여 시간을 유지한다 (밸브 카운트다운)', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async (p) => ({
+      ok: true, code: 69,
+      data: p.path[0] === 'power'
+        ? { 'x.com.samsung.da.power': 'On' }
+        : { currentMachineState: 'pause', remainingTime: '00:45:00' },
+    });
+    const op = (await c.getStatus(DEV)).main.dryerOperatingState;
+    assert.strictEqual(op.machineState.value, 'pause');
+    assert.strictEqual(op.remainingTime.value, 45, '일시정지에서 잔여 시간이 0으로 떨어진다');
+  });
+
   await t('건조기 jobState를 클라우드 표기로 옮긴다 (안티주름 조기 알림 방지)', () => {
     assert.strictEqual(LocalApplianceClient._jobState('Weightsensing'), 'weightSensing');
     assert.strictEqual(LocalApplianceClient._jobState('Finish'), 'finished');
