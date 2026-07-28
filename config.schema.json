@@ -37,11 +37,6 @@
         "type": "number",
         "default": 30
       },
-      "temperatureStep": {
-        "title": "기본 목표온도 스텝(℃) — SmartAC 공용",
-        "type": "number",
-        "default": 1
-      },
       "devices": {
         "type": "array",
         "title": "장치 목록",
@@ -83,17 +78,17 @@
               "description": "구형 = 2in1 등 SmartThings 이전 모델(직접 통신). 그 외는 SmartThings 기기."
             },
             "name": {
-              "title": "[구형 AC] 액세서리 이름",
+              "title": "[구형 AC] 액세서리 이름 (필수)",
               "type": "string",
               "description": "홈 앱에 표시될 이름"
             },
             "ip": {
-              "title": "[구형 AC] 에어컨 IP 주소",
+              "title": "[구형 AC] 에어컨 IP 주소 (필수)",
               "type": "string",
               "format": "ipv4"
             },
             "token": {
-              "title": "[구형 AC] 인증 토큰",
+              "title": "[구형 AC] 인증 토큰 (필수)",
               "type": "string"
             },
             "deviceIndex": {
@@ -399,10 +394,6 @@
               "title": "[신형 AC] 목표온도 최대값 (°C)",
               "type": "number"
             },
-            "temperatureStep": {
-              "title": "[신형 AC] 목표온도 스텝 (°C)",
-              "type": "number"
-            },
             "enableNotificationSensor": {
               "title": "[세탁/건조기] 종료 알림 센서 활성화",
               "type": "boolean",
@@ -487,7 +478,7 @@
             "powerOnResendStepSec": {
               "title": "[AC 공통] 후속 재전송 간격 (초)",
               "type": "number",
-              "placeholder": "4",
+              "placeholder": "2",
               "description": "전원 ON 후속 체인(모드 → 자동건조)의 단계 간격. 비워두면 2초."
             },
             "legacyOnGuardSec": {
@@ -597,6 +588,18 @@
           }
         },
         {
+          "key": "devices[].deviceLabel",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+          }
+        },
+        {
+          "key": "devices[].deviceId",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+          }
+        },
+        {
           "key": "devices[].pollingInterval",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
@@ -617,18 +620,6 @@
           }
         },
         {
-          "key": "devices[].certPath",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
-          }
-        },
-        {
-          "key": "devices[].keyPath",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
-          }
-        },
-        {
           "key": "devices[].manufacturer",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
@@ -641,44 +632,32 @@
           }
         },
         {
-          "key": "devices[].deviceLabel",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
-          }
-        },
-        {
-          "key": "devices[].deviceId",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
-          }
-        },
-        {
           "key": "devices[].transport",
           "type": "select",
           "titleMap": [
             {
               "value": "cloud",
-              "name": "클라우드 (SmartThings API — 기본)"
+              "name": "클라우드"
             },
             {
               "value": "local",
-              "name": "로컬 (DTLS-CoAP 직접통신 — 2023년 이후 기기)"
+              "name": "로컬"
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].local.host",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
           }
         },
         {
           "key": "devices[].local.fallbackToCloud",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
           }
         },
         {
@@ -700,19 +679,19 @@
           "titleMap": [
             {
               "value": "Cool",
-              "name": "냉방 (Cool) 명령"
+              "name": "냉방"
             },
             {
               "value": "CoolClean",
-              "name": "냉방청정 (CoolClean) 명령"
+              "name": "냉방청정"
             },
             {
               "value": "Dry",
-              "name": "제습 (Dry) 명령"
+              "name": "제습"
             },
             {
               "value": "DryClean",
-              "name": "제습청정 (DryClean) 명령"
+              "name": "제습청정"
             }
           ],
           "condition": {
@@ -726,11 +705,11 @@
           "titleMap": [
             {
               "value": "comfort",
-              "name": "무풍 (Comfort)"
+              "name": "무풍"
             },
             {
               "value": "wind",
-              "name": "상하 바람 (Wind)"
+              "name": "상하 바람"
             },
             {
               "value": "none",
@@ -748,7 +727,7 @@
           "titleMap": [
             {
               "value": "autoClean",
-              "name": "자동건조 (AutoClean)"
+              "name": "자동건조"
             },
             {
               "value": "none",
@@ -772,15 +751,77 @@
           "titleMap": [
             {
               "value": "drop",
-              "name": "무시 (드롭)"
+              "name": "무시"
             },
             {
               "value": "queue",
-              "name": "큐 (보호 후 한 번에 전송)"
+              "name": "끝난 뒤 전송"
             }
           ],
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
+          }
+        },
+        {
+          "key": "devices[].coolModeCommand",
+          "type": "select",
+          "required": true,
+          "titleMap": [
+            {
+              "value": "cool",
+              "name": "냉방"
+            },
+            {
+              "value": "dry",
+              "name": "제습"
+            },
+            {
+              "value": "fan",
+              "name": "송풍"
+            },
+            {
+              "value": "aIComfort",
+              "name": "AI 쾌적"
+            }
+          ],
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+          }
+        },
+        {
+          "key": "devices[].swingBinding",
+          "type": "select",
+          "required": true,
+          "titleMap": [
+            {
+              "value": "windFree",
+              "name": "무풍"
+            },
+            {
+              "value": "none",
+              "name": "사용 안 함"
+            }
+          ],
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+          }
+        },
+        {
+          "key": "devices[].lockBinding",
+          "type": "select",
+          "required": true,
+          "titleMap": [
+            {
+              "value": "autoClean",
+              "name": "자동건조"
+            },
+            {
+              "value": "none",
+              "name": "사용 안 함"
+            }
+          ],
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
           }
         },
         {
@@ -818,68 +859,6 @@
           "key": "devices[].hideLockToggle",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
-          }
-        },
-        {
-          "key": "devices[].coolModeCommand",
-          "type": "select",
-          "required": true,
-          "titleMap": [
-            {
-              "value": "cool",
-              "name": "냉방 (Cool) 명령"
-            },
-            {
-              "value": "coolClean",
-              "name": "냉방청정 (CoolClean) 명령"
-            },
-            {
-              "value": "dry",
-              "name": "제습 (Dry) 명령"
-            },
-            {
-              "value": "dryClean",
-              "name": "제습청정 (DryClean) 명령"
-            }
-          ],
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
-          }
-        },
-        {
-          "key": "devices[].swingBinding",
-          "type": "select",
-          "required": true,
-          "titleMap": [
-            {
-              "value": "windFree",
-              "name": "무풍 (WindFree)"
-            },
-            {
-              "value": "none",
-              "name": "사용 안 함"
-            }
-          ],
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
-          }
-        },
-        {
-          "key": "devices[].lockBinding",
-          "type": "select",
-          "required": true,
-          "titleMap": [
-            {
-              "value": "autoClean",
-              "name": "자동건조 (Auto Clean)"
-            },
-            {
-              "value": "none",
-              "name": "사용 안 함"
-            }
-          ],
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
           }
         },
         {

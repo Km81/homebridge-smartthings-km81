@@ -590,6 +590,32 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
       '신형 AC 모드 목록이 기기 실제 지원값과 다르다: '+modes.join(','));
   });
 
+  await t('드롭다운 렌더 소스(layout titleMap)가 schema oneOf와 값·라벨 모두 일치한다', () => {
+    // v2.3.4 실사고: UI 드롭다운은 schema oneOf가 아니라 layout의 titleMap을 그린다.
+    // oneOf만 고치면 화면에는 옛 목록이 그대로 나온다(개인정보 보호 창으로 캐시 배제 확인).
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const P = s.schema.properties.devices.items.properties;
+    const maps = [];
+    const walk = (n) => {
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      if (!n || typeof n !== 'object') return;
+      if (n.titleMap && n.key && n.key.startsWith('devices[].')) maps.push(n);
+      for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v);
+    };
+    walk(s.layout);
+    assert.ok(maps.length >= 8, `titleMap이 ${maps.length}개뿐 — layout 구조 변경 의심`);
+    for (const m of maps) {
+      const f = P[m.key.split('.').pop()];
+      if (!f || !f.oneOf) continue;
+      const lv = m.titleMap.map(t => t.value).sort().join(',');
+      const sv = f.oneOf.flatMap(o => o.enum).sort().join(',');
+      assert.strictEqual(lv, sv, `${m.key} 값 불일치: layout(${lv}) != schema(${sv})`);
+      const ln = m.titleMap.map(t => t.name).sort().join('|');
+      const sn = f.oneOf.map(o => o.title).sort().join('|');
+      assert.strictEqual(ln, sn, `${m.key} 라벨 불일치: layout(${ln}) != schema(${sn})`);
+    }
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();
