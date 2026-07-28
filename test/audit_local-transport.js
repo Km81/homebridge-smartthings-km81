@@ -61,6 +61,7 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   await t('HIGH-2 같은 기기 요청은 도착 순서대로 직렬 실행된다', async () => {
     const c = mkClient();
     c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);   // 신원 확인은 별도 테스트에서 다룬다
     const order = [];
     let n = 0;
     c._rpc = (payload) => {
@@ -80,6 +81,7 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   await t('HIGH-2 앞 요청이 실패해도 뒤 요청이 막히지 않는다', async () => {
     const c = mkClient();
     c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
     let n = 0;
     c._rpc = async () => (++n === 1 ? Promise.reject(new Error('첫 요청 실패')) : { ok: true, code: 68 });
     await assert.rejects(c._post(DEV, ['a'], {}));
@@ -91,6 +93,7 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     const c = mkClient();
     c.registerDevice('A', devInfo);
     c.registerDevice('B', { ...devInfo, host: '10.0.0.2' });
+    c._verified.set('A', true); c._verified.set('B', true);
     let released;
     const gate = new Promise(r => { released = r; });
     c._rpc = (p) => (p.host === '10.0.0.1' ? gate.then(() => ({ ok: true, code: 68 })) : Promise.resolve({ ok: true, code: 68 }));
@@ -159,6 +162,7 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   await t('세탁물 getStatus는 액세서리가 읽는 형태를 유지한다', async () => {
     const c = mkClient();
     c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
     c._rpc = async (p) => ({
       ok: true, code: 69,
       data: p.path[0] === 'power'
@@ -173,6 +177,7 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   await t('전원이 꺼져 있으면 가동 중으로 보고하지 않는다', async () => {
     const c = mkClient();
     c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
     c._rpc = async (p) => ({
       ok: true, code: 69,
       data: p.path[0] === 'power'
@@ -225,10 +230,37 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(props.transport, 'schema에 transport가 없다');
     assert.ok(props.local && props.local.properties.host, 'schema에 local.host가 없다');
     const flat = JSON.stringify(s.layout);
-    for (const key of ['devices[].transport', 'devices[].local.host', 'devices[].local.port',
-      'devices[].local.localPort', 'devices[].local.fallbackToCloud']) {
+    for (const key of ['devices[].transport', 'devices[].local.host', 'devices[].local.fallbackToCloud']) {
       assert.ok(flat.includes(key), `layout에 ${key}가 없어 UI에 표시되지 않는다`);
     }
+  });
+
+  // v2.2.3 — 사용자에게 묻는 건 IP까지다. 포트는 자동(구형 에어컨 UX와 동일).
+  await t('포트는 설정 UI에 노출하지 않는다 (자동 탐지/자동 결정)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const flat = JSON.stringify(s.layout);
+    assert.ok(!flat.includes('devices[].local.port"'), 'DTLS 포트가 UI에 다시 노출됐다');
+    assert.ok(!flat.includes('devices[].local.localPort'), '고정 송신 포트가 UI에 다시 노출됐다');
+    const L = s.schema.properties.devices.items.properties.local;
+    assert.ok(!(L.required || []).includes('port'), 'port가 필수로 되어 있다');
+    assert.ok(L.properties.port && L.properties.localPort, '고급 재정의용 스키마 항목이 사라졌다');
+  });
+
+  await t('포트를 비워둬도 등록·요청이 성립한다 (자동 탐지 경로)', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, { host: '10.0.0.1', label: '포트없음' });   // port 없음
+    const ports = [];
+    c._rpc = async (p) => { ports.push(p.port); return { ok: true, code: 69, data: { di: DEV, 'x.com.samsung.da.power': 'On' }, port: 49155 }; };
+    assert.strictEqual(await c.getPower(DEV), true);
+    assert.strictEqual(ports[0], undefined, '첫 요청은 port 없이 보내야 브릿지가 탐지한다');
+    assert.strictEqual(c.devices.get(DEV).port, 49155, '탐지된 포트를 학습하지 않았다');
+  });
+
+  await t('브릿지가 포트 자동 탐지와 송신 포트 자동 결정을 갖는다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local', 'bridge.py'), 'utf8');
+    assert.ok(/def resolve_port\(/.test(src), '포트 자동 탐지 함수가 없다');
+    assert.ok(/def auto_local_port\(/.test(src), '송신 포트 자동 결정 함수가 없다');
+    assert.ok(/PROBE_PORTS\s*=\s*\[49154/.test(src), '탐지 포트 범위가 사라졌다');
   });
 
   await t('UI 조건식에 옵셔널 체이닝을 쓰지 않는다 (평가기 호환)', () => {
@@ -236,6 +268,116 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     const bodies = JSON.stringify(s).match(/"functionBody":"[^"]*"/g) || [];
     const bad = bodies.filter(b => b.includes('?.'));
     assert.strictEqual(bad.length, 0, `옵셔널 체이닝 사용 조건식 ${bad.length}건`);
+  });
+
+  // ===== 2차 감사 반영 (v2.2.3) =====
+
+  await t('HIGH-B 폴백도 기기 순서 체인 안에서 실행된다 (끄기 뒤 모드 착탄 차단)', async () => {
+    const order = [];
+    const c = mkClient({
+      cloudClient: {
+        setMode: async () => { order.push('클라우드모드'); },
+        setPower: async () => { order.push('클라우드전원'); },
+      },
+    });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = (p) => {
+      const isMode = p.path && p.path[0] === 'mode';
+      if (isMode) return new Promise((_, rej) => setTimeout(() => rej(new Error('로컬 요청 실패')), 40));
+      return new Promise(res => setTimeout(() => { order.push('로컬끄기'); res({ ok: true, code: 68 }); }, 5));
+    };
+    const modeP = c.setMode(DEV, 'cool');
+    const offP = c.setPower(DEV, false);
+    await Promise.allSettled([modeP, offP]);
+    // 모드(폴백 포함)가 완전히 끝난 뒤에 끄기가 나가야 한다 — 반대면 재점등
+    assert.strictEqual(order.join(','), '클라우드모드,로컬끄기', `순서 역전: ${order.join(',')}`);
+  });
+
+  await t('HIGH-B 쓰기 타임아웃(결과 불명)이면 모드는 클라우드로 재전송하지 않는다', async () => {
+    let cloudCalled = false;
+    const c = mkClient({ cloudClient: { setMode: async () => { cloudCalled = true; } } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async () => { throw new Error('로컬 요청 시간 초과'); };
+    await assert.rejects(c.setMode(DEV, 'cool'), /시간 초과/);
+    assert.strictEqual(cloudCalled, false, '결과 불명인데 클라우드로 또 보냈다(재점등 위험)');
+  });
+
+  await t('HIGH-B 전원 끄기는 결과 불명이어도 폴백한다 (유실이 더 나쁨)', async () => {
+    let cloudOff = false;
+    const c = mkClient({ cloudClient: { setPower: async () => { cloudOff = true; } } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async () => { throw new Error('로컬 요청 시간 초과'); };
+    await c.setPower(DEV, false);
+    assert.strictEqual(cloudOff, true, '끄기가 유실됐다');
+  });
+
+  await t('쓰기 직후 읽기 실패는 클라우드 낡은 값으로 덮지 않는다 (타일 되돌림 방지)', async () => {
+    let cloudRead = false;
+    const c = mkClient({ cloudClient: { getPower: async () => { cloudRead = true; return false; } } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    c._rpc = async (p) => (p.op === 'post' ? { ok: true, code: 68 } : Promise.reject(new Error('읽기 실패')));
+    await c.setPower(DEV, true);
+    await assert.rejects(c.getPower(DEV), /읽기 실패/);
+    assert.strictEqual(cloudRead, false, '방금 쓴 값을 클라우드 낡은 값으로 덮었다');
+  });
+
+  await t('연속 실패가 쌓이면 학습한 포트를 버리고 다시 탐지한다', async () => {
+    const c = mkClient();
+    c.registerDevice(DEV, { ...devInfo, port: 49154, fallbackToCloud: false });
+    c._verified.set(DEV, true);
+    c._rpc = async () => { throw new Error('무응답'); };
+    for (let i = 0; i < 3; i++) await c.getPower(DEV).catch(() => {});
+    assert.strictEqual(c.devices.get(DEV).port, undefined, '포트가 무효화되지 않았다');
+  });
+
+  await t('기기 신원이 다르면 로컬을 끄고 클라우드로 내려간다 (IP 오타 방어)', async () => {
+    let cloudUsed = false;
+    const c = mkClient({ cloudClient: { getPower: async () => { cloudUsed = true; return true; } } });
+    c.registerDevice(DEV, devInfo);
+    c._rpc = async (p) => (p.path[0] === 'oic'
+      ? { ok: true, code: 69, data: { di: '00000000-dead-beef-0000-000000000000', n: '엉뚱한 기기' } }
+      : { ok: true, code: 69, data: {} });
+    assert.strictEqual(await c.getPower(DEV), true);
+    assert.strictEqual(cloudUsed, true, '신원 불일치인데 로컬을 계속 썼다');
+    assert.strictEqual(c._verified.get(DEV), false);
+  });
+
+  await t('건조기 jobState를 클라우드 표기로 옮긴다 (안티주름 조기 알림 방지)', () => {
+    assert.strictEqual(LocalApplianceClient._jobState('Weightsensing'), 'weightSensing');
+    assert.strictEqual(LocalApplianceClient._jobState('Finish'), 'finished');
+    assert.strictEqual(LocalApplianceClient._jobState('None'), 'none');
+    assert.strictEqual(LocalApplianceClient._jobState('Drying'), 'drying');
+    assert.strictEqual(LocalApplianceClient._jobState(null), null);
+  });
+
+  await t('브릿지 stdin 파손(EPIPE)을 처리한다 (홈브릿지 전체 크래시 방지)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'), 'utf8');
+    assert.ok(/_proc\.stdin\.on\('error'/.test(src), 'stdin error 핸들러가 없다');
+  });
+
+  await t('HIGH-A 클라우드 검색이 실패해도 로컬 기기는 캐시로 바인딩한다', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/_bindFromCacheOffline\(/.test(src), '오프라인 바인딩 폴백이 없다');
+    assert.ok(/_scheduleRediscovery\(/.test(src), '백그라운드 재검색이 없다');
+    const fn = src.slice(src.indexOf('_bindFromCacheOffline('), src.indexOf('_scheduleRediscovery(stDevices, attempt'));
+    assert.ok(/transport === 'local'/.test(fn), '로컬 기기 대상 필터가 없다');
+  });
+
+  await t('index.js가 읽는 플랫폼 설정 키가 스키마에 등재돼 있다', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const used = new Set((src.match(/this\.config\.[a-zA-Z]+/g) || []).map(x => x.split('.').pop()));
+    const missing = [...used].filter(k => !s.schema.properties[k] && !['devices', 'platform', 'name'].includes(k));
+    assert.deepStrictEqual(missing, [], `스키마에 없는 설정 키: ${missing.join(', ')}`);
+  });
+
+  await t('CI가 파이썬 브릿지 문법을 검사한다', () => {
+    const y = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'publish.yml'), 'utf8');
+    assert.ok(/py_compile\s+lib\/local\/bridge\.py/.test(y), 'CI에 py_compile 단계가 없다');
   });
 
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);

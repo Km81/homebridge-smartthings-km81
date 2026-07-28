@@ -165,6 +165,8 @@ class SmartThingsKM81Platform {
       const remoteDevices = await this.smartthings.getDevices();
       if (!remoteDevices || remoteDevices.length === 0) {
         this.log.warn('SmartThings에서 어떤 장치도 찾지 못했습니다. 권한이나 연결을 확인해주세요.');
+        this._bindFromCacheOffline(stDevices);
+        this._scheduleRediscovery(stDevices);
         return false;
       }
       this.log.info(`SmartThings 장치 ${remoteDevices.length}개 발견`);
@@ -191,8 +193,50 @@ class SmartThingsKM81Platform {
       return true;
     } catch (e) {
       this.log.error('SmartThings 장치 검색 중 오류:', e.message);
+      this._bindFromCacheOffline(stDevices);
+      this._scheduleRediscovery(stDevices);
       return false;
     }
+  }
+
+  // v2.2.3 — ★클라우드 검색이 실패해도 로컬 기기는 살린다(감사 HIGH-A).
+  // 정전 복구나 인터넷 장애 중에 홈브릿지가 재시작되면, LAN으로 멀쩡히 통신 가능한
+  // 승준 에어컨·건조기까지 바인딩이 안 돼 홈킷 조작이 조용히 유실됐다(무성 유실 = 최악).
+  // 캐시된 액세서리에 지난 부팅의 deviceId가 남아 있으므로 그것으로 붙인다.
+  _bindFromCacheOffline(stDevices) {
+    const localOnly = stDevices.filter(d => d?.transport === 'local');
+    if (localOnly.length === 0) return;
+    let bound = 0;
+    for (const configDevice of localOnly) {
+      const target = normalizeKorean(configDevice.deviceLabel);
+      const cached = this.accessories.find(a =>
+        normalizeKorean(a.context?.configDevice?.deviceLabel || '') === target && a.context?.device?.deviceId);
+      if (!cached) {
+        this.log.warn(`[${configDevice.deviceLabel}] 클라우드 검색 실패 + 캐시에도 정보가 없어 이번 부팅에는 바인딩하지 못했습니다.`);
+        continue;
+      }
+      this.log.warn(`[${configDevice.deviceLabel}] 클라우드 검색 실패 — 캐시 정보로 로컬 경로만 살려 바인딩합니다.`);
+      this._bindSmartThingsDevice(cached.context.device, configDevice);
+      bound += 1;
+    }
+    if (bound > 0) this.log.info(`오프라인 바인딩 ${bound}개 — 로컬 전송 기기는 정상 동작합니다.`);
+  }
+
+  // 클라우드가 돌아오면 조용히 보정한다. 실패해도 로컬은 이미 붙어 있다.
+  _scheduleRediscovery(stDevices, attempt = 0) {
+    if (this._rediscoverTimer) clearTimeout(this._rediscoverTimer);
+    const delays = [30000, 120000, 600000];
+    const delay = delays[Math.min(attempt, delays.length - 1)];
+    this.log.info(`SmartThings 재검색을 ${delay / 1000}초 뒤 시도합니다 (${attempt + 1}회째).`);
+    this._rediscoverTimer = setTimeout(async () => {
+      this._rediscoverTimer = null;
+      const ok = await this._discoverAndBindSmartThings(stDevices);
+      if (ok) this.log.info('SmartThings 재검색 성공 — 클라우드 경로가 복구되었습니다.');
+      else this._scheduleRediscovery(stDevices, attempt + 1);
+    }, delay);
+    this.registerShutdown(() => {
+      if (this._rediscoverTimer) clearTimeout(this._rediscoverTimer);
+    });
   }
 
   _setupLegacyAc(configDevice) {
@@ -289,13 +333,14 @@ class SmartThingsKM81Platform {
   _clientFor(configDevice, deviceId) {
     if (configDevice.transport !== 'local') return this.smartthings;
     const cfg = configDevice.local || {};
-    if (!this.localClient || !cfg.host || !cfg.port) {
-      this.log.warn(`[${configDevice.deviceLabel}] 로컬 전송을 요청했지만 준비되지 않아 클라우드로 동작합니다 (host/port 확인).`);
+    // port는 선택이다 — 비워두면 브릿지가 49152~49160을 탐지한다.
+    if (!this.localClient || !cfg.host) {
+      this.log.warn(`[${configDevice.deviceLabel}] 로컬 전송을 요청했지만 준비되지 않아 클라우드로 동작합니다 (기기 IP 확인).`);
       return this.smartthings;
     }
     this.localClient.registerDevice(deviceId, {
       host: cfg.host,
-      port: Number(cfg.port),
+      port: cfg.port ? Number(cfg.port) : undefined,
       localPort: cfg.localPort ? Number(cfg.localPort) : undefined,
       label: configDevice.deviceLabel,
       kind: configDevice.deviceType,

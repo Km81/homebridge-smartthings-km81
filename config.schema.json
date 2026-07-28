@@ -449,20 +449,19 @@
                   "title": "기기 IP",
                   "type": "string",
                   "placeholder": "192.168.1.78",
-                  "required": false
+                  "required": false,
+                  "description": "공유기에서 고정 IP(주소예약)로 잡아두세요. 포트는 자동으로 찾습니다."
                 },
                 "port": {
-                  "title": "DTLS 포트",
+                  "title": "DTLS 포트 (선택)",
                   "type": "integer",
-                  "default": 49154,
-                  "minimum": 49152,
-                  "maximum": 49160,
-                  "description": "승준 에어컨 49154 / 건조기 49155 (기기마다 다름)"
+                  "description": "(고급) 비워두면 49152~49160을 훑어 자동 탐지합니다. 보통 건드릴 필요 없습니다.",
+                  "placeholder": "비워두면 자동 탐지"
                 },
                 "localPort": {
-                  "title": "고정 송신 포트(선택)",
+                  "title": "고정 송신 포트 (선택)",
                   "type": "integer",
-                  "description": "비워두면 임의 포트. 재시작 시 기기에 유령 세션이 남는 것을 막고 싶을 때만 지정."
+                  "description": "(고급) 비워두면 기기 IP로부터 자동 결정합니다. 재시작 시 유령 세션 방지를 위해 항상 같은 값을 씁니다."
                 },
                 "fallbackToCloud": {
                   "title": "로컬 실패 시 클라우드로 폴백",
@@ -476,6 +475,18 @@
             "deviceType"
           ]
         }
+      },
+      "localPythonBin": {
+        "title": "(고급) 파이썬 실행 파일",
+        "type": "string",
+        "placeholder": "python3",
+        "description": "로컬 전송 브릿지를 띄울 파이썬. 비워두면 python3."
+      },
+      "localStateDir": {
+        "title": "(고급) 로컬 전송 자산 경로",
+        "type": "string",
+        "placeholder": "/homebridge/.km81-local",
+        "description": "파이썬 의존성·인증서를 두는 폴더. 비워두면 /homebridge/.km81-local."
       }
     },
     "required": [
@@ -614,18 +625,6 @@
         },
         {
           "key": "devices[].local.host",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
-          }
-        },
-        {
-          "key": "devices[].local.port",
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
-          }
-        },
-        {
-          "key": "devices[].local.localPort",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
           }

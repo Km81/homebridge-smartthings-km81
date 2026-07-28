@@ -29,6 +29,11 @@ from smartthings_local.protocol.dtls_session import DtlsCoapSession  # noqa: E40
 
 SAMSUNG_GATEWAY = ("connect-v2.samsungiotcloud.com", 443)
 
+# 기기가 DTLS-CoAP를 여는 포트 범위. 기기·펌웨어마다 달라(승준 에어컨 49154, 건조기 49155)
+# 사용자가 포트를 몰라도 되도록 자동 탐지한다. 자주 쓰이는 순서로 시도.
+PROBE_PORTS = [49154, 49155, 49153, 49152, 49156, 49157, 49158, 49159, 49160]
+_resolved_ports = {}   # host → port
+
 _out_lock = threading.Lock()
 _sessions = {}
 _session_locks = {}
@@ -126,7 +131,72 @@ def mint_cert(ca_pem_path, out_chain, out_key):
     log("클라이언트 인증서 발급됨")
 
 
+# ---------- 포트 자동 탐지 ----------
+def _dtls_hello():
+    """최소 DTLS 1.2 ClientHello. 포트가 살아 있으면 HelloVerifyRequest가 돌아온다."""
+    import struct
+    body = b"\xfe\xfd" + os.urandom(32) + b"\x00\x00"
+    suites = [0xC02B, 0xC023, 0xC0AE]
+    body += struct.pack(">H", len(suites) * 2) + b"".join(struct.pack(">H", s) for s in suites)
+    body += b"\x01\x00"
+    ext = (b"\x00\x0a" + struct.pack(">H", 4) + b"\x00\x02\x00\x17"
+           + b"\x00\x0b" + struct.pack(">H", 2) + b"\x01\x00"
+           + b"\x00\x0d" + struct.pack(">H", 4) + b"\x00\x02\x04\x03")
+    body += struct.pack(">H", len(ext)) + ext
+    hs = (b"\x01" + struct.pack(">I", len(body))[1:] + b"\x00\x00" + b"\x00\x00\x00"
+          + struct.pack(">I", len(body))[1:] + body)
+    return b"\x16\xfe\xfd\x00\x00\x00\x00\x00\x00\x00\x00" + struct.pack(">H", len(hs)) + hs
+
+
+def resolve_port(host, hint=None):
+    """DTLS 응답이 오는 포트를 찾는다. 임의 송신 포트를 쓰므로 고정 포트 바인딩과 충돌하지 않는다."""
+    cached = _resolved_ports.get(host)
+    if cached:
+        return cached
+    # 이미 이 기기와 세션이 있으면 그 포트가 정답이다. 단일 세션 기기라서 탐지 패킷 자체가
+    # 진행 중인 핸드셰이크를 방해할 수 있으므로, 세션이 있으면 절대 다시 훑지 않는다
+    # (실측: 세션 수립 중이던 건조기가 탐지에 무응답 → 불필요한 클라우드 폴백 1회 발생).
+    for key in list(_sessions.keys()):
+        if key.startswith(host + ":"):
+            port = int(key.rsplit(":", 1)[1])
+            _resolved_ports[host] = port
+            return port
+    order = ([hint] if hint else []) + [p for p in PROBE_PORTS if p != hint]
+    pkt = _dtls_hello()
+    for _attempt in range(2):   # 기기가 바쁘면 한 번 놓칠 수 있어 1회 재시도
+        for port in order:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(2.0)
+            try:
+                s.sendto(pkt, (host, port))
+                data, _ = s.recvfrom(2048)
+                if data and data[0] == 0x16:
+                    _resolved_ports[host] = port
+                    log("포트 자동 탐지: %s → %d" % (host, port))
+                    return port
+            except Exception:
+                pass
+            finally:
+                s.close()
+    raise ConnectionError("%s 에서 DTLS 포트를 찾지 못했습니다 (49152~49160 무응답)" % host)
+
+
 # ---------- 세션 관리 ----------
+def auto_local_port(host):
+    """기기별로 항상 같은 송신 포트를 쓴다.
+
+    홈브릿지를 재시작하면 기기에 유령 DTLS 세션이 5~15분 남는데, 새 임의 포트로 붙으면
+    기기가 '다른 피어'로 보고 무시한다. 같은 5-tuple로 재접속하면 RFC 6347 §4.2.8에 따라
+    기기가 '재부팅한 피어'로 처리해 옛 세션을 버린다. 사용자가 포트를 고르지 않아도 되도록
+    IP 마지막 옥텟에서 결정적으로 만든다(기기 포트 범위 49152~49160과 겹치지 않는 49200+).
+    """
+    try:
+        last = int(host.rsplit(".", 1)[1])
+    except (ValueError, IndexError):
+        last = abs(hash(host)) % 250
+    return 49200 + (last % 250)
+
+
 def session_for(host, port, cert, key, local_port=None):
     k = "%s:%d" % (host, port)
     with _registry_lock:
@@ -135,9 +205,16 @@ def session_for(host, port, cert, key, local_port=None):
         s = _sessions.get(k)
         if s is not None:
             return s, lock
-        s = DtlsCoapSession(host, port, cert_path=cert, key_path=key,
-                            local_port=local_port)
-        s.connect()
+        lp = local_port or auto_local_port(host)
+        try:
+            s = DtlsCoapSession(host, port, cert_path=cert, key_path=key, local_port=lp)
+            s.connect()
+        except OSError as e:
+            # 그 포트를 다른 프로세스가 이미 쓰고 있으면 임의 포트로 물러선다
+            # (유령 세션 이점은 잃지만 연결 자체는 살린다).
+            log("고정 송신 포트 %d 사용 불가(%s) — 임의 포트로 연결" % (lp, e))
+            s = DtlsCoapSession(host, port, cert_path=cert, key_path=key)
+            s.connect()
         s.start_reader()
         _sessions[k] = s
         log("로컬 세션 연결됨 %s" % k)
@@ -165,7 +242,18 @@ def handle(req, cert, key):
     rid = req.get("id")
     if op == "ping":
         return {"id": rid, "ok": True, "data": {"sessions": list(_sessions)}}
-    host, port = req["host"], int(req["port"])
+    host = req["host"]
+    # port가 없거나 0이면 자동 탐지한다(사용자가 포트를 몰라도 되게).
+    raw_port = req.get("port")
+    try:
+        port = int(raw_port) if raw_port else 0
+    except (TypeError, ValueError):
+        port = 0
+    if not port:
+        try:
+            port = resolve_port(host)
+        except Exception as e:
+            return {"id": rid, "ok": False, "error": str(e)}
     path = req["path"]
     # v2.2.1 — ★쓰기는 절대 재시도하지 않는다(감사 HIGH-2).
     # 재시도가 늦게 성공하면 그 사이 도착한 OFF보다 뒤에 착탄해, 꺼진 에어컨에 모드 명령이
@@ -190,7 +278,7 @@ def handle(req, cert, key):
             if not (64 <= code <= 95):   # 2.00~2.31 이외는 실패
                 return {"id": rid, "ok": False, "code": code,
                         "error": "CoAP %d.%02d 응답" % (code >> 5, code & 31)}
-            return {"id": rid, "ok": True, "code": code, "data": data}
+            return {"id": rid, "ok": True, "code": code, "data": data, "port": port}
         except Exception as e:
             last = e
             drop_session(host, port)
