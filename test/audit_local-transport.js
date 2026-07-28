@@ -380,6 +380,29 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(/py_compile\s+lib\/local\/bridge\.py/.test(y), 'CI에 py_compile 단계가 없다');
   });
 
+  // ===== v2.3.0 — deviceId 직접 지정(부팅 시 클라우드 조회 생략) =====
+  await t('deviceId가 스키마와 layout 양쪽에 있다 (UI에서 입력 가능)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    assert.ok(s.schema.properties.devices.items.properties.deviceId, 'schema에 deviceId가 없다');
+    assert.ok(JSON.stringify(s.layout).includes('devices[].deviceId'), 'layout에 deviceId가 없어 UI에 안 보인다');
+  });
+
+  await t('deviceId가 있으면 클라우드 조회를 건너뛴다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/_bindByConfiguredIds\(/.test(src), 'deviceId 직접 바인딩 경로가 없다');
+    const fn = src.slice(src.indexOf('_bindByConfiguredIds(stDevices) {'), src.indexOf('// 성공 시 true'));
+    assert.ok(/configDevice\.deviceId/.test(fn), 'config의 deviceId를 읽지 않는다');
+    assert.ok(/remaining\.push\(configDevice\)/.test(fn), 'deviceId 없는 기기를 조회 대상으로 넘기지 않는다');
+    // 조회는 '남은 기기'로만 — 전체를 다시 조회하면 클라우드 생략 효과가 사라진다
+    assert.ok(/_discoverAndBindSmartThings\(needDiscovery\)/.test(src),
+      '클라우드 조회에 전체 목록을 넘기고 있다(생략 효과 없음)');
+  });
+
+  await t('검색 성공 시 deviceId를 로그로 안내한다 (config에 옮겨 적을 수 있게)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/deviceId=\$\{found\.deviceId\}/.test(src), 'deviceId 안내 로그가 없다');
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();

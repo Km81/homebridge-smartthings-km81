@@ -469,6 +469,15 @@
                   "default": true
                 }
               }
+            },
+            "deviceId": {
+              "title": "SmartThings deviceId (선택)",
+              "type": "string",
+              "placeholder": "3ea2a924-ec77-9f1e-8d4f-1900d3f3e791",
+              "description": "적어두면 부팅할 때 SmartThings 클라우드 조회를 건너뜁니다(2026-10 API 유료화 대비). 값은 홈브릿지 로그의 \"↳ deviceId=...\" 줄에서 복사하세요. 비워두면 기존처럼 장치 이름으로 찾습니다.",
+              "condition": {
+                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+              }
             }
           },
           "required": [
@@ -602,6 +611,12 @@
         },
         {
           "key": "devices[].deviceLabel",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+          }
+        },
+        {
+          "key": "devices[].deviceId",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }

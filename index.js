@@ -137,16 +137,20 @@ class SmartThingsKM81Platform {
       }
     }
 
-    let stDiscoverySucceeded = stDevices.length === 0;
-    if (stDevices.length > 0 && this.smartthings) {
+    // v2.3.0 — config에 deviceId가 적힌 기기는 클라우드 조회 없이 바로 붙인다.
+    // 모든 기기에 적어두면 부팅에도 SmartThings API를 한 번도 쓰지 않는다(유료화 대비).
+    const needDiscovery = this._bindByConfiguredIds(stDevices);
+
+    let stDiscoverySucceeded = needDiscovery.length === 0;
+    if (needDiscovery.length > 0 && this.smartthings) {
       const hasToken = await this.smartthings.init();
       if (!hasToken) {
         this.oauthServer.start(async () => {
-          const ok = await this._discoverAndBindSmartThings(stDevices);
+          const ok = await this._discoverAndBindSmartThings(needDiscovery);
           if (ok) this._cleanupStaleAccessories();
         });
       } else {
-        stDiscoverySucceeded = await this._discoverAndBindSmartThings(stDevices);
+        stDiscoverySucceeded = await this._discoverAndBindSmartThings(needDiscovery);
       }
     }
 
@@ -157,6 +161,26 @@ class SmartThingsKM81Platform {
     } else {
       this.log.warn('SmartThings 장치 검색이 실패하거나 비어 있어, 오래된 액세서리 정리를 건너뜁니다. (자동화 보호)');
     }
+  }
+
+  // v2.3.0 — config에 deviceId가 있으면 클라우드 조회를 건너뛰고 바로 바인딩한다.
+  // 반환값 = 아직 클라우드 조회가 필요한 기기 목록.
+  // 왜: 부팅 시 deviceLabel→deviceId 변환이 유일한 클라우드 의존이었다. 이걸 없애면
+  // transport=local 기기는 SmartThings API를 한 번도 쓰지 않는다(2026-10 유료화 대비).
+  _bindByConfiguredIds(stDevices) {
+    const remaining = [];
+    for (const configDevice of stDevices) {
+      const id = (configDevice.deviceId || '').trim();
+      if (!id) { remaining.push(configDevice); continue; }
+      const label = configDevice.deviceLabel || id;
+      this.log.info(`'${label}' (${configDevice.deviceType}) — config의 deviceId로 바로 연결 (클라우드 조회 생략)`);
+      if (this.smartthings) this.smartthings.registerDeviceLabel(id, label);
+      this._bindSmartThingsDevice({ deviceId: id, label }, configDevice);
+    }
+    if (remaining.length === 0 && stDevices.length > 0) {
+      this.log.info('모든 SmartThings 기기가 config의 deviceId로 연결됨 — 부팅 시 클라우드 조회 없음');
+    }
+    return remaining;
   }
 
   // 성공 시 true, 실패/빈 결과 시 false 반환. 호출자가 cleanup 여부를 결정한다.
@@ -188,6 +212,7 @@ class SmartThingsKM81Platform {
         const found = matches[0];
         this.smartthings.registerDeviceLabel(found.deviceId, configDevice.deviceLabel); // 로그에 UUID 대신 이름 (v2.1.0)
         this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) HomeKit 추가/갱신`);
+        this.log.info(`  ↳ deviceId=${found.deviceId} — config에 적어두면 다음 부팅부터 클라우드 조회를 건너뜁니다`);
         this._bindSmartThingsDevice(found, configDevice);
       }
       return true;
