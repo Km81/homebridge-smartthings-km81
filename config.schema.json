@@ -438,21 +438,18 @@
                 }
               ],
               "condition": {
-                "functionBody": "return ['smartAc','washer','dryer'].includes((model.devices||[])[arrayIndices[0]]?.deviceType);"
+                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               }
             },
             "local": {
               "title": "로컬 전송 설정",
               "type": "object",
-              "condition": {
-                "functionBody": "return model.devices && model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].transport === 'local';"
-              },
               "properties": {
                 "host": {
                   "title": "기기 IP",
                   "type": "string",
                   "placeholder": "192.168.1.78",
-                  "required": true
+                  "required": false
                 },
                 "port": {
                   "title": "DTLS 포트",
@@ -596,6 +593,47 @@
           "key": "devices[].deviceLabel",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+          }
+        },
+        {
+          "key": "devices[].transport",
+          "type": "select",
+          "titleMap": [
+            {
+              "value": "cloud",
+              "name": "클라우드 (SmartThings API — 기본)"
+            },
+            {
+              "value": "local",
+              "name": "로컬 (DTLS-CoAP 직접통신 — 2023년 이후 기기)"
+            }
+          ],
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+          }
+        },
+        {
+          "key": "devices[].local.host",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+          }
+        },
+        {
+          "key": "devices[].local.port",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+          }
+        },
+        {
+          "key": "devices[].local.localPort",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+          }
+        },
+        {
+          "key": "devices[].local.fallbackToCloud",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
           }
         },
         {

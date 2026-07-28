@@ -184,13 +184,28 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.strictEqual(st.main.dryerOperatingState.remainingTime.value, 0);
   });
 
-  await t('매핑 없는 모드는 전송하지 않는다 (엉뚱한 명령 방지)', async () => {
-    const c = mkClient();
+  await t('UI에서 고를 수 있는 모드 값이 전부 로컬 매핑을 갖는다', async () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const choices = s.schema.properties.devices.items.properties.coolModeCommand.oneOf.flatMap(o => o.enum);
+    for (const v of choices) {
+      const c = mkClient();
+      c.registerDevice(DEV, devInfo);
+      let sentModes = null;
+      c._rpc = async (p) => { sentModes = p.payload && p.payload['x.com.samsung.da.modes']; return { ok: true, code: 68 }; };
+      await c.setMode(DEV, v);
+      assert.ok(Array.isArray(sentModes) && sentModes.length === 1,
+        `coolModeCommand='${v}'가 로컬에서 전송되지 않았다(매핑 누락)`);
+    }
+  });
+
+  await t('매핑 없는 모드는 조용히 삼키지 않고 클라우드로 넘긴다', async () => {
+    const c = mkClient({ cloudClient: { setMode: async () => 'cloud-mode' } });
     c.registerDevice(DEV, devInfo);
     let sent = false;
     c._rpc = async () => { sent = true; return { ok: true, code: 68 }; };
-    await c.setMode(DEV, 'heat');
-    assert.strictEqual(sent, false);
+    const r = await c.setMode(DEV, 'heat');
+    assert.strictEqual(sent, false, '로컬로 엉뚱한 명령을 보냈다');
+    assert.strictEqual(r, 'cloud-mode', '무성 유실 — 폴백이 발동하지 않았다');
   });
 
   await t('구형 에어컨 경로는 로컬 전송과 무관하다 (무변경 원칙)', () => {
@@ -199,6 +214,28 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(!/legacyAc/.test(clientFor), '_clientFor가 legacyAc를 건드린다');
     const legacy = idx.slice(idx.indexOf("filter(d => d?.deviceType === 'legacyAc')"));
     assert.ok(legacy.length > 0, 'legacyAc 처리 경로가 사라졌다');
+  });
+
+  // ===== 설정 UI 노출 (v2.2.2) =====
+  // 홈브릿지 UI는 schema가 아니라 layout에 있는 필드만 그린다. 2.2.0/2.2.1에서
+  // schema에만 넣어 설정 화면에 아무것도 안 보였다(실사용 발견).
+  await t('설정 UI에 전송 경로 필드가 실제로 노출된다 (schema+layout 양쪽)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const props = s.schema.properties.devices.items.properties;
+    assert.ok(props.transport, 'schema에 transport가 없다');
+    assert.ok(props.local && props.local.properties.host, 'schema에 local.host가 없다');
+    const flat = JSON.stringify(s.layout);
+    for (const key of ['devices[].transport', 'devices[].local.host', 'devices[].local.port',
+      'devices[].local.localPort', 'devices[].local.fallbackToCloud']) {
+      assert.ok(flat.includes(key), `layout에 ${key}가 없어 UI에 표시되지 않는다`);
+    }
+  });
+
+  await t('UI 조건식에 옵셔널 체이닝을 쓰지 않는다 (평가기 호환)', () => {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const bodies = JSON.stringify(s).match(/"functionBody":"[^"]*"/g) || [];
+    const bad = bodies.filter(b => b.includes('?.'));
+    assert.strictEqual(bad.length, 0, `옵셔널 체이닝 사용 조건식 ${bad.length}건`);
   });
 
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
