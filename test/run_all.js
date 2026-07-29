@@ -24,6 +24,8 @@ const SUITES = [
   { file: 'log_volume.js' },
   { file: 'schema_ui.js' },
   { file: 'readme_check.js' },
+  // v2.5.0 — MQTT 브리지 계약(availability 의미론·setValue 경유 명령·경보 문구 충돌·발행 dedupe)
+  { file: 'mqtt_bridge.js' },
 
   { file: 'chain_test.js' },
   { file: 'sim_ac_fail.js' },

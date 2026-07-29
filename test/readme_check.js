@@ -24,7 +24,7 @@ const { COOL_MODE_COMMANDS } = require('../lib/shared');
 const SRC = ['index.js', 'lib/accessories/Laundry.js', 'lib/accessories/LegacyAC.js',
   'lib/accessories/SmartAC.js', 'lib/api/LegacyACClient.js', 'lib/api/LegacyLaundryClient.js',
   'lib/api/LocalApplianceClient.js', 'lib/api/SmartThingsClient.js', 'lib/auth/OAuthServer.js',
-  'lib/local/bridge.py']
+  'lib/local/bridge.py', 'lib/mqtt/MqttBridge.js', 'lib/mqtt/attach.js']
   .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 
 const fail = [];

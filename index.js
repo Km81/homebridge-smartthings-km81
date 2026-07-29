@@ -8,6 +8,8 @@ const LegacyAC = require('./lib/accessories/LegacyAC');
 const SmartAC = require('./lib/accessories/SmartAC');
 const Laundry = require('./lib/accessories/Laundry');
 const LegacyLaundryClient = require('./lib/api/LegacyLaundryClient');
+const MqttBridge = require('./lib/mqtt/MqttBridge');
+const { attachSmartAc, attachLaundry } = require('./lib/mqtt/attach');
 const path = require('path');
 
 const PLATFORM_NAME = 'SmartThingsKM81';
@@ -99,6 +101,11 @@ class SmartThingsKM81Platform {
       }
     }
 
+    // MQTT 브리지 — HA가 기기에 직접 붙지 않고 이 브리지가 내보내는 상태만 보게 한다.
+    // 꺼져 있으면(기본) 아무 것도 하지 않으며, 어떤 실패도 홈킷에 영향을 주지 않는다.
+    this.mqtt = new MqttBridge(this.log, this.config.mqtt || {}, pkg.version);
+    if (this.mqtt.enabled) this.registerShutdown(() => this.mqtt.stop());
+
     this.log.info(`${PLATFORM_NAME} 플랫폼 초기화 중... (v${pkg.version})`);
 
     // 디바이스 바인딩은 부팅당 1회만 보장 — OAuth 콜백 경로에서도 같은 액세서리에
@@ -123,6 +130,9 @@ class SmartThingsKM81Platform {
 
   async _didFinishLaunching() {
     this.log.info('장치 검색 시작');
+
+    // 기기 바인딩보다 먼저 붙여 둔다 — 연결이 늦어도 등록분은 연결 시 한꺼번에 올라간다.
+    if (this.mqtt.enabled) this.mqtt.start();
 
     if (this.devices.length === 0) {
       this.log.warn('설정된 장치(devices)가 없습니다.');
@@ -389,14 +399,67 @@ class SmartThingsKM81Platform {
     if (configDevice.deviceType === 'smartAc') {
       const ac = new SmartAC({ log: this.log, api: this.api, smartthings: client, platform: this });
       ac.configure(accessory, configDevice, pkg.version);
+      this._attachMqtt(accessory, configDevice, ac);
     } else if (configDevice.deviceType === 'washer' || configDevice.deviceType === 'dryer') {
       const laundry = new Laundry({
         log: this.log, api: this.api, smartthings: client, platform: this,
         deviceKind: configDevice.deviceType
       });
       laundry.configure(accessory, configDevice, pkg.version);
+      this._attachMqtt(accessory, configDevice, laundry);
     } else {
       this.log.warn(`알 수 없는 deviceType: ${configDevice.deviceType}`);
+    }
+  }
+
+  // HA 중계용 토픽 이름. 설정에 mqttSlug가 있으면 그걸 쓴다(권장 — 배포 config에 명시).
+  // 없으면 기기 종류를 쓴다(집에 종류별 1대뿐). ★같은 종류가 둘 이상이고 mqttSlug도 없으면
+  // 번호가 아니라 deviceId 조각으로 구분한다 — 번호는 바인딩 순서에 종속돼 부팅마다 A↔B가
+  // 뒤바뀌면 HA에 유령 엔티티가 쌓이기 때문(적대 감사). deviceId 조각은 순서·재부팅 무관.
+  _mqttSlug(configDevice, deviceId) {
+    const norm = s => String(s || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    const explicit = norm(configDevice.mqttSlug);
+    if (explicit) return explicit;   // 명시 slug는 중복 방지 대상 아님(사용자 책임)
+    const base = norm(configDevice.deviceType) || 'device';
+    if (!this._usedSlugs) this._usedSlugs = new Set();
+    if (!this._usedSlugs.has(base)) { this._usedSlugs.add(base); return base; }
+    // 이미 같은 종류가 있었다 → deviceId 앞 6자로 안정적으로 가른다.
+    const suffix = norm(deviceId).replace(/_/g, '').slice(0, 6) || 'x';
+    let slug = `${base}_${suffix}`;
+    let n = 2;
+    while (this._usedSlugs.has(slug)) slug = `${base}_${suffix}_${n++}`;
+    this._usedSlugs.add(slug);
+    this.log.warn(`[MQTT] 같은 종류(${base}) 기기가 여럿입니다 — '${configDevice.deviceLabel}'의 토픽 slug를 '${slug}'로 정했습니다. `
+      + `안정적 운용을 위해 config의 mqttSlug를 명시하는 것을 권합니다.`);
+    return slug;
+  }
+
+  // ★어떤 실패도 홈킷을 막지 않는다 — 중계는 부가 기능이다.
+  _attachMqtt(accessory, configDevice, logic) {
+    if (!this.mqtt || !this.mqtt.enabled) return;
+    if (configDevice.mqttExpose === false) {
+      this.log.debug?.(`[MQTT] '${accessory.displayName}' 은 설정에서 중계 제외됨`);
+      return;
+    }
+    // ★세탁조 분리(splitCompartments) + MQTT 조합은 아직 메인 구획만 반영된다(보조는 별
+    //   액세서리라 이 중계가 못 본다). 현재는 합침 고정이라 미발현이나, 켜면 조용히 틀린
+    //   상태가 나가므로 경고만 남긴다(적대 감사 F2). 합침 모드에선 이 경고가 안 뜬다.
+    if (configDevice.splitCompartments === true
+        && (configDevice.deviceType === 'washer' || configDevice.deviceType === 'dryer')) {
+      this.log.warn(`[MQTT] '${accessory.displayName}'는 세탁조 분리가 켜져 있습니다 — MQTT 중계는 현재 `
+        + `메인 구획만 반영합니다(보조 구획 미반영). 합침 모드 사용을 권합니다.`);
+    }
+    const slug = this._mqttSlug(configDevice, accessory.context?.device?.deviceId);
+    try {
+      const common = { bridge: this.mqtt, api: this.api, log: this.log, accessory, configDevice, slug };
+      const ok = configDevice.deviceType === 'smartAc'
+        ? attachSmartAc({ ...common, logic })
+        : attachLaundry({ ...common, kind: configDevice.deviceType });
+      if (ok) this.log.info(`[MQTT] '${accessory.displayName}' 중계 시작 — ${this.mqtt.base}/${slug}`);
+    } catch (e) {
+      // ⚠️문구 주의: NAS hb-watch가 '연결 실패'·'무응답'·'폴링 실패' 등을 텔레그램 경보로 올린다.
+      //   중계는 부가 기능이라 홈킷이 멀쩡한데도 기기 장애 경보가 울리면 오탐이다 → 그 단어를 피한다.
+      this.log.error(`[MQTT] '${accessory.displayName}' 중계를 붙이지 못했습니다 — 홈킷은 정상 동작합니다: ${e.message}`);
     }
   }
 

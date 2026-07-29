@@ -539,6 +539,60 @@
         "type": "string",
         "placeholder": "/homebridge/.km81-local",
         "description": "파이썬 의존성·인증서를 두는 폴더. 비워두면 /homebridge/.km81-local."
+      },
+      "mqtt": {
+        "type": "object",
+        "title": "MQTT 브리지 (Home Assistant 중계)",
+        "description": "로컬로 제어 중인 기기의 상태를 MQTT로 내보내 Home Assistant가 자동으로 엔티티를 만들게 합니다. HA는 기기에 직접 붙지 않습니다.",
+        "properties": {
+          "enabled": {
+            "title": "MQTT 브리지 사용",
+            "type": "boolean",
+            "default": false,
+            "description": "끄면 아무 것도 하지 않습니다. 홈킷 동작에는 영향이 없습니다."
+          },
+          "host": {
+            "title": "브로커 주소",
+            "type": "string",
+            "placeholder": "192.168.1.11",
+            "description": "Mosquitto 등 MQTT 브로커의 IP 또는 호스트 이름입니다."
+          },
+          "port": {
+            "title": "브로커 포트",
+            "type": "integer",
+            "default": 1883,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "username": {
+            "title": "사용자 이름",
+            "type": "string"
+          },
+          "password": {
+            "title": "비밀번호",
+            "type": "string"
+          },
+          "baseTopic": {
+            "title": "기본 토픽",
+            "type": "string",
+            "default": "km81/appliance",
+            "description": "상태는 이 아래 <기기>/state 로 발행됩니다."
+          },
+          "discoveryPrefix": {
+            "title": "HA 자동 검색 접두어",
+            "type": "string",
+            "default": "homeassistant",
+            "description": "Home Assistant의 MQTT 자동 검색 접두어입니다. 기본값을 쓰면 됩니다."
+          },
+          "republishInterval": {
+            "title": "재발행 주기(초)",
+            "type": "integer",
+            "default": 60,
+            "minimum": 15,
+            "maximum": 3600,
+            "description": "변화가 없어도 이 주기로 현재 상태를 다시 올려, 브로커가 재시작해도 값이 비지 않게 합니다."
+          }
+        }
       }
     },
     "required": [
@@ -571,6 +625,57 @@
       "items": [
         "temperatureMin",
         "temperatureMax"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "MQTT 브리지 (Home Assistant 중계)",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "mqtt.enabled",
+        {
+          "key": "mqtt.host",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.port",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.username",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.password",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.baseTopic",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.discoveryPrefix",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        },
+        {
+          "key": "mqtt.republishInterval",
+          "condition": {
+            "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
+          }
+        }
       ]
     },
     {

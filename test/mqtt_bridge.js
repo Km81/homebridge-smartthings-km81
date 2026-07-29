@@ -1,0 +1,377 @@
+'use strict';
+
+// MQTT 브리지 검증 (v2.5.0)
+//
+// 이 스위트가 지키려는 것 — 전부 "틀리면 실제로 아픈" 계약이다.
+//  ① 꺼져 있으면 아무 것도 하지 않는다(기본값). 브로커가 없어도 홈킷은 무영향.
+//  ② 브로커 연결 전에 등록해도 검색·상태가 유실되지 않는다(연결 시 일괄 재발행).
+//  ③ ★availability 토픽은 브리지 하나뿐이다 — 세탁기 전원 꺼짐이 unavailable로
+//     새지 않아야 한다(요청서 §4-2 의미론). 꺼짐은 상태값으로만 표현된다.
+//  ④ 명령은 HomeKit 특성 setValue로 흘러 액세서리의 안전 로직을 탄다(직접 전송 금지).
+//  ⑤ 로그 문구가 NAS hb-watch 경보 정규식과 겹치지 않는다(중계 문제로 기기 장애 오탐 금지).
+//  ⑥ 상태가 안 바뀌면 재발행하지 않는다(브로커·HA 부하).
+
+const assert = require('assert');
+const path = require('path');
+const fs = require('fs');
+
+const MqttBridge = require('../lib/mqtt/MqttBridge');
+const { attachSmartAc, attachLaundry } = require('../lib/mqtt/attach');
+
+let pass = 0, fail = 0;
+const ok = (cond, msg, detail = '') => {
+  if (cond) { pass++; console.log(`  ✅ ${msg}${detail ? ' (' + detail + ')' : ''}`); }
+  else { fail++; console.log(`  ❌ ${msg}${detail ? ' (' + detail + ')' : ''}`); }
+};
+
+const mkLog = () => {
+  const lines = [];
+  const rec = lvl => (...a) => lines.push(`${lvl}|${a.join(' ')}`);
+  return { lines, info: rec('info'), warn: rec('warn'), error: rec('error'), debug: rec('debug') };
+};
+
+// ── 가짜 MQTT 클라이언트 ────────────────────────────────────────────────────
+// 실제 브로커 없이 발행·구독·연결 시점을 관측한다.
+class FakeClient {
+  constructor(opts) {
+    this.opts = opts;
+    this.published = [];
+    this.subscribed = [];
+    this._handlers = {};
+    this.ended = false;
+  }
+  on(ev, fn) { (this._handlers[ev] = this._handlers[ev] || []).push(fn); return this; }
+  emit(ev, ...a) { (this._handlers[ev] || []).forEach(f => f(...a)); }
+  publish(topic, payload, opts) { this.published.push({ topic, payload: String(payload), opts: opts || {} }); }
+  subscribe(topic) { this.subscribed.push(topic); }
+  end() { this.ended = true; }
+}
+
+// require('mqtt')를 가짜로 바꿔치기 — 브리지 코드 수정 없이 주입한다.
+function withFakeMqtt(fn) {
+  const Module = require('module');
+  const orig = Module.prototype.require;
+  const created = [];
+  Module.prototype.require = function (id) {
+    if (id === 'mqtt') {
+      return { connect: (url, opts) => { const c = new FakeClient(opts); c.url = url; created.push(c); return c; } };
+    }
+    return orig.apply(this, arguments);
+  };
+  try { return fn(created); }
+  finally { Module.prototype.require = orig; }
+}
+
+// ── HAP 최소 모방 ───────────────────────────────────────────────────────────
+class Char {
+  constructor(name) { this.name = name; this.value = null; this.props = {}; this._h = {}; this.setCalls = []; }
+  on(ev, fn) { (this._h[ev] = this._h[ev] || []).push(fn); return this; }
+  setProps(p) { Object.assign(this.props, p); return this; }
+  // 실제 HAP과 같게: setValue는 'set' 핸들러를 부르고 값도 갱신하며 'change'를 낸다.
+  setValue(v) {
+    this.setCalls.push(v);
+    (this._h.set || []).forEach(f => f(v, () => {}));
+    this.updateValue(v);
+    return this;
+  }
+  updateValue(v) {
+    const old = this.value;
+    this.value = v;
+    if (old !== v) (this._h.change || []).forEach(f => f({ oldValue: old, newValue: v }));
+    return this;
+  }
+}
+class Svc {
+  constructor(displayName) { this.displayName = displayName; this._c = new Map(); }
+  getCharacteristic(k) {
+    const key = typeof k === 'string' ? k : (k && k.__name) || String(k);
+    if (!this._c.has(key)) this._c.set(key, new Char(key));
+    return this._c.get(key);
+  }
+  testCharacteristic(k) {
+    const key = typeof k === 'string' ? k : (k && k.__name) || String(k);
+    return this._c.has(key);
+  }
+  updateCharacteristic(k, v) { this.getCharacteristic(k).updateValue(v); return this; }
+}
+const C = {
+  Active: 'Active', CurrentTemperature: 'CurrentTemperature',
+  CoolingThresholdTemperature: 'CoolingThresholdTemperature',
+  SwingMode: 'SwingMode', LockPhysicalControls: 'LockPhysicalControls',
+  On: 'On', InUse: 'InUse', RemainingDuration: 'RemainingDuration',
+};
+const S = { HeaterCooler: 'HeaterCooler', Valve: 'Valve', Switch: 'Switch' };
+const mkApi = () => ({ hap: { Characteristic: C, Service: S } });
+const mkAccessory = (displayName, svcKeys) => {
+  const svcs = new Map();
+  for (const k of svcKeys) svcs.set(k, new Svc(displayName));
+  return { displayName, getService: k => svcs.get(k) || null, _svcs: svcs };
+};
+
+const CFG = { enabled: true, host: '192.168.1.11', port: 1883, username: 'u', password: 'p' };
+
+console.log('MQTT 브리지 검증\n');
+
+// ── ① 꺼져 있으면 무해 ──────────────────────────────────────────────────────
+console.log('① 기본값(꺼짐) — 아무 것도 하지 않는다');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, {}, '2.5.0');
+  ok(b.enabled === false, 'enabled 기본값 false');
+  withFakeMqtt(created => {
+    b.start();
+    ok(created.length === 0, '꺼진 상태에서 브로커 연결 시도 없음', `연결 ${created.length}회`);
+  });
+  b.stop();
+  ok(log.lines.filter(l => !l.startsWith('debug')).length === 0, '사용자 가시 로그 0줄',
+    `${log.lines.filter(l => !l.startsWith('debug')).length}줄`);
+}
+
+// ── 켠 상태에서 host 누락 ───────────────────────────────────────────────────
+console.log('\n② 켰지만 브로커 주소 없음 — 명확히 알리고 중단');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, { enabled: true, host: '' }, '2.5.0');
+  withFakeMqtt(created => {
+    b.start();
+    ok(created.length === 0, '연결 시도하지 않음');
+  });
+  ok(log.lines.some(l => l.startsWith('error')), 'error로 알림');
+}
+
+// ── 토픽 정규화 — 와일드카드/공백이 토픽에 박히지 않는다 ─────────────────────
+console.log('\n②-b 브로커 토픽에 MQTT 와일드카드·공백이 새지 않는다');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, { ...CFG, baseTopic: 'km81/#appl appliance+' }, '2.5.0');
+  ok(!/[#+\s]/.test(b.base), `base 토픽에 와일드카드·공백 없음`, b.base);
+  ok(!/[#+\s]/.test(b.availabilityTopic), 'availability 토픽도 안전', b.availabilityTopic);
+}
+
+// ── ③ 연결 전 등록 → 연결 시 일괄 재발행 ──────────────────────────────────
+console.log('\n③ 연결 전에 등록해도 유실되지 않는다');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.5.0');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    ok(!!c, '브로커 연결 시작');
+    // 아직 connect 이벤트가 오지 않은 상태에서 등록
+    b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });
+    b.publishLaundryState('washer', { state: 'finished', remainingMin: 0 });
+    ok(c.published.length === 0, '연결 전 발행은 나가지 않음', `${c.published.length}건`);
+
+    c.emit('connect');
+    const topics = c.published.map(p => p.topic);
+    ok(topics.some(t => /binary_sensor\/km81_washer\/running\/config$/.test(t)), '검색(config) 재발행됨');
+    ok(topics.some(t => t === 'km81/appliance/washer/state'), '상태 재발행됨');
+    const stateMsg = c.published.filter(p => p.topic === 'km81/appliance/washer/state').pop();
+    ok(stateMsg && stateMsg.opts.retain === true, '상태는 retain으로 발행');
+    b.stop();
+  });
+}
+
+// ── ④ availability 의미론 ───────────────────────────────────────────────────
+console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 상태값이다');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.5.0');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    ok(c.opts.will && c.opts.will.topic === 'km81/appliance/bridge/availability',
+      'LWT가 브리지 availability 토픽을 가리킴');
+    ok(c.opts.will.payload === 'offline' && c.opts.will.retain === true, 'LWT는 offline·retain');
+    c.emit('connect');
+    b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });
+    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true });
+
+    // 모든 검색 payload가 같은 availability_topic 하나만 참조해야 한다.
+    const cfgs = c.published.filter(p => /\/config$/.test(p.topic)).map(p => JSON.parse(p.payload));
+    ok(cfgs.length >= 6, `검색 엔티티 ${cfgs.length}개 발행`);
+    const avails = new Set(cfgs.map(x => x.availability_topic));
+    ok(avails.size === 1 && avails.has('km81/appliance/bridge/availability'),
+      '전 엔티티가 브리지 availability 하나만 참조', [...avails].join(','));
+
+    // 기기별 availability 토픽을 만들지 않았는지 — 발행 토픽 전수 확인
+    const perDevAvail = c.published.filter(p => /\/availability$/.test(p.topic)
+      && p.topic !== 'km81/appliance/bridge/availability');
+    ok(perDevAvail.length === 0, '기기별 availability 토픽 없음', `${perDevAvail.length}건`);
+
+    // 세탁기 '꺼짐'은 상태값으로 표현된다
+    b.publishLaundryState('washer', { state: 'finished', remainingMin: 0 });
+    const st = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/washer/state').pop().payload);
+    ok(st.running === 'OFF' && typeof st.status === 'string' && st.status.length > 0,
+      '꺼짐이 상태값(running=OFF)으로 표현됨', JSON.stringify(st));
+
+    // ★entity_id 결정성(§7-2): 모든 config에 ASCII object_id가 있어야 HA가 한글을 로마자화하지 않는다
+    ok(cfgs.every(x => typeof x.object_id === 'string' && /^[a-z0-9_]+$/.test(x.object_id)),
+      '전 엔티티가 ASCII object_id 보유(entity_id 결정적)');
+    // ★job(진행 단계) 센서는 만들지 않는다 — jobState를 못 얻어 영구 공백이 되는 죽은 엔티티 방지
+    ok(!cfgs.some(x => x.unique_id && x.unique_id.endsWith('_job')), 'job(진행 단계) 센서 미발행');
+    b.stop();
+  });
+}
+
+// ── ⑤ 변화 없으면 재발행 안 함 ──────────────────────────────────────────────
+console.log('\n⑤ 같은 상태를 반복 발행하지 않는다');
+{
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.5.0');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+    b.registerLaundry({ slug: 'dryer', label: '건조기', kind: 'dryer' });
+    const before = c.published.filter(p => p.topic === 'km81/appliance/dryer/state').length;
+    b.publishLaundryState('dryer', { state: 'running', remainingMin: 30 });
+    b.publishLaundryState('dryer', { state: 'running', remainingMin: 30 });
+    b.publishLaundryState('dryer', { state: 'running', remainingMin: 30 });
+    const after = c.published.filter(p => p.topic === 'km81/appliance/dryer/state').length;
+    ok(after - before === 1, '같은 값 3회 → 발행 1회', `${after - before}건`);
+    b.publishLaundryState('dryer', { state: 'running', remainingMin: 29 });
+    const after2 = c.published.filter(p => p.topic === 'km81/appliance/dryer/state').length;
+    ok(after2 - after === 1, '값이 바뀌면 발행', `${after2 - after}건`);
+    b.stop();
+  });
+}
+
+// ── ⑥ 명령은 HomeKit 특성으로 흐른다 ───────────────────────────────────────
+console.log('\n⑥ ★명령이 HomeKit 특성 setValue를 탄다 (안전 로직 재사용)');
+{
+  const log = mkLog();
+  const api = mkApi();
+  const b = new MqttBridge(log, CFG, '2.5.0');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+
+    const acc = mkAccessory('승준 에어컨', [S.HeaterCooler]);
+    const main = acc.getService(S.HeaterCooler);
+    main.getCharacteristic(C.Active).updateValue(0);
+    main.getCharacteristic(C.CurrentTemperature).updateValue(27);
+    main.getCharacteristic(C.CoolingThresholdTemperature).setProps({ minValue: 18, maxValue: 30 });
+    main.getCharacteristic(C.CoolingThresholdTemperature).updateValue(24);
+    main.getCharacteristic(C.SwingMode).updateValue(0);
+    main.getCharacteristic(C.LockPhysicalControls).updateValue(0);
+
+    const okAttach = attachSmartAc({
+      bridge: b, api, log, accessory: acc, logic: {}, configDevice: {}, slug: 'seungjun_ac',
+    });
+    ok(okAttach === true, '연결 성공');
+
+    // 구독 토픽 확인
+    ok(c.subscribed.includes('km81/appliance/seungjun_ac/set/mode'), '모드 명령 토픽 구독');
+    ok(c.subscribed.includes('km81/appliance/seungjun_ac/set/temperature'), '온도 명령 토픽 구독');
+
+    // 켜기 명령 → Active.setValue(1)
+    c.emit('message', 'km81/appliance/seungjun_ac/set/mode', Buffer.from('cool'));
+    return new Promise(res => setImmediate(() => {
+      const calls = main.getCharacteristic(C.Active).setCalls;
+      ok(calls.length === 1 && calls[0] === 1, '켜기 → Active setValue(1)', JSON.stringify(calls));
+
+      // 범위를 넘는 온도는 기기 허용 범위로 잘라서 넣는다
+      c.emit('message', 'km81/appliance/seungjun_ac/set/temperature', Buffer.from('99'));
+      setImmediate(() => {
+        const t = main.getCharacteristic(C.CoolingThresholdTemperature).setCalls;
+        ok(t.length === 1 && t[0] === 30, '범위 초과 온도를 상한으로 clamp', JSON.stringify(t));
+
+        // 숫자가 아닌 값은 거부(예외) — 기기로 쓰레기가 안 나간다
+        c.emit('message', 'km81/appliance/seungjun_ac/set/temperature', Buffer.from('abc'));
+        setImmediate(() => {
+          const t2 = main.getCharacteristic(C.CoolingThresholdTemperature).setCalls;
+          ok(t2.length === 1, '숫자 아닌 온도는 전송하지 않음', `setValue ${t2.length}회`);
+
+          // 스위치가 없으면 주 서비스의 SwingMode/LockPhysicalControls로 대체된다
+          c.emit('message', 'km81/appliance/seungjun_ac/set/windfree', Buffer.from('ON'));
+          setImmediate(() => {
+            ok(main.getCharacteristic(C.SwingMode).setCalls.length === 1,
+              '무풍 → SwingMode로 대체 전송');
+
+            // ★retain된 명령은 무시해야 한다 — 재연결마다 옛 명령이 재전달돼 기기가 저절로
+            //   켜지는 사고 방지. Active setCalls가 늘지 않아야 한다.
+            const activeBefore = main.getCharacteristic(C.Active).setCalls.length;
+            c.emit('message', 'km81/appliance/seungjun_ac/set/mode', Buffer.from('cool'), { retain: true });
+            // 빈 페이로드도 무시
+            c.emit('message', 'km81/appliance/seungjun_ac/set/mode', Buffer.from(''));
+            setImmediate(() => {
+              ok(main.getCharacteristic(C.Active).setCalls.length === activeBefore,
+                'retain·빈 명령은 setValue를 유발하지 않음',
+                `추가 ${main.getCharacteristic(C.Active).setCalls.length - activeBefore}회`);
+              b.stop();
+              res();
+            });
+          });
+        });
+      });
+    }));
+  });
+}
+
+// ── ⑦ 세탁물 상태 매핑 ─────────────────────────────────────────────────────
+setTimeout(() => {
+  console.log('\n⑦ 세탁물 3-상태가 밸브 특성에서 정확히 복원된다');
+  {
+    const log = mkLog();
+    const api = mkApi();
+    const b = new MqttBridge(log, CFG, '2.5.0');
+    withFakeMqtt(created => {
+      b.start();
+      const c = created[0];
+      c.emit('connect');
+      const acc = mkAccessory('세탁기', [S.Valve]);
+      const valve = acc.getService(S.Valve);
+      valve.getCharacteristic(C.Active).updateValue(0);
+      valve.getCharacteristic(C.InUse).updateValue(0);
+      valve.getCharacteristic(C.RemainingDuration).updateValue(0);
+      attachLaundry({ bridge: b, api, log, accessory: acc, configDevice: {}, slug: 'washer', kind: 'washer' });
+
+      const last = () => JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/washer/state').pop().payload);
+      setImmediate(() => {
+        ok(last().running === 'OFF', '전원 꺼짐/대기 → running=OFF');
+
+        valve.updateCharacteristic(C.Active, 1);
+        valve.updateCharacteristic(C.InUse, 1);
+        valve.updateCharacteristic(C.RemainingDuration, 3600);
+        setImmediate(() => {
+          const s = last();
+          ok(s.running === 'ON' && s.remaining_min === 60, '운전 중 → ON·60분', JSON.stringify(s));
+
+          // 일시정지: Active 유지, InUse 해제
+          valve.updateCharacteristic(C.InUse, 0);
+          setImmediate(() => {
+            const p = last();
+            ok(p.running === 'OFF' && p.status.includes('일시'), '일시정지 구분됨', JSON.stringify(p));
+            b.stop();
+
+            // ── ⑧ 로그 문구가 hb-watch 경보와 겹치지 않는다 ──
+            console.log('\n⑧ ★로그 문구가 NAS 감시 경보 정규식과 겹치지 않는다');
+            const ALARM = /폴링 실패|상태 조회 실패|상태 폴링 오류|연결 실패|무응답|최종 요청 실패/;
+            const files = ['lib/mqtt/MqttBridge.js', 'lib/mqtt/attach.js'];
+            let hits = [];
+            for (const f of files) {
+              const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+              src.split('\n').forEach((line, i) => {
+                if (/this\.log\.(info|warn|error)/.test(line) && ALARM.test(line)) hits.push(`${f}:${i + 1}`);
+              });
+            }
+            // index.js의 MQTT 관련 로그도 함께 본다
+            const idx = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+            idx.split('\n').forEach((line, i) => {
+              if (/\[MQTT\]/.test(line) && /this\.log\.(info|warn|error)/.test(line) && ALARM.test(line)) {
+                hits.push(`index.js:${i + 1}`);
+              }
+            });
+            ok(hits.length === 0, '중계 로그에 기기 장애 경보 문구 없음', hits.join(', ') || '0건');
+
+            // ── 마무리 ──
+            console.log(`\n${fail === 0 ? '✅ 전부 통과' : '❌ 실패 ' + fail + '건'} (통과 ${pass})`);
+            process.exit(fail === 0 ? 0 : 1);
+          });
+        });
+      });
+    });
+  }
+}, 50);
