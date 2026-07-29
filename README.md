@@ -66,14 +66,61 @@ npm install -g homebridge-smartthings-km81
 
 ### SmartThings 클라우드를 쓸 때
 
-로컬로 붙지 않는 기기는 클라우드를 씁니다. 이때만 아래가 필요합니다.
+로컬로 붙지 않는 기기, 또는 로컬 실패 시 폴백을 쓰려면 SmartThings OAuth가 필요합니다.
 
-1. [SmartThings 개발자 워크스페이스](https://smartthings.developer.samsung.com/workspace/)에서 **OAuth 통합**을 만듭니다.
-2. 권한은 `r:devices:*`와 `x:devices:*`를 선택합니다.
-3. 발급된 **Client ID / Client Secret**과 직접 정한 **Redirect URI**(예: `http://<홈브릿지IP>:8999/callback`)를 플러그인 설정에 넣습니다.
-4. Homebridge를 재시작하면 로그에 인증 주소가 나옵니다. 브라우저로 열어 한 번 승인하면 끝입니다.
+> 모든 기기를 로컬로 쓰고 폴백도 끈다면 이 과정은 **건너뛰어도 됩니다.**
 
-> 모든 기기를 로컬로 쓴다면 이 과정은 필요 없습니다.
+#### 먼저 알아야 할 것 — Redirect URI는 반드시 `https`
+
+SmartThings는 Redirect URI로 **`https://`만 받습니다.** `http://192.168.0.10:8999/callback` 같은 주소는 **등록 자체가 거부됩니다.**
+
+그런데 이 플러그인이 띄우는 인증 서버는 **평문 HTTP, 포트 8999 고정**입니다. 그래서 둘을 이어 줄 것이 필요합니다.
+
+```
+SmartThings ──https──▶ 리버스 프록시 ──http──▶ 홈브릿지 :8999
+             (인터넷)   (TLS 종료)              (인증 서버)
+```
+
+**리버스 프록시**(Nginx Proxy Manager, Caddy, Cloudflare Tunnel 등)로 도메인 하나를 8999로 넘기면 됩니다. 이미 홈브릿지 UI를 외부에서 https로 쓰고 있다면 같은 방식으로 하나 더 만들면 됩니다.
+
+인증은 **한 번만** 하면 되므로, 프록시를 상시 두기 싫다면 인증할 때만 잠깐 열었다 닫아도 됩니다.
+
+#### 절차
+
+1. [SmartThings 개발자 워크스페이스](https://smartthings.developer.samsung.com/workspace/)에서 **New Project → Device Integration → SmartThings Cloud Connector → OAuth-In**을 만듭니다.
+
+2. 권한(Scope)은 **세 개 모두** 선택합니다.
+   - `r:devices:*` (상태 읽기)
+   - `w:devices:*` (설정 쓰기)
+   - `x:devices:*` (명령 실행)
+   > 하나라도 빠지면 인증은 되는데 제어가 안 됩니다.
+
+3. **Redirect URI**를 등록합니다. 예: `https://homebridge.example.com/oauth/callback`
+   - 경로(`/oauth/callback`)는 원하는 대로 정해도 됩니다. 플러그인은 **경로만 보고** 콜백을 받습니다.
+   - 이 주소가 리버스 프록시를 거쳐 **홈브릿지의 8999 포트**에 닿아야 합니다.
+
+4. 발급된 **Client ID**와 **Client Secret**, 그리고 방금 등록한 **Redirect URI**를 플러그인 설정에 그대로 넣습니다. 세 값은 워크스페이스에 등록한 것과 **글자 하나까지 같아야** 합니다.
+
+5. Homebridge를 재시작하면 로그에 이런 안내가 나옵니다.
+
+   ```
+   ====================[ 스마트싱스 인증 필요 ]====================
+   1. 임시 인증 서버가 포트 8999에서 실행 중입니다.
+   2. 아래 URL을 복사하여 웹 브라우저에서 열고 …
+   인증 URL: https://api.smartthings.com/oauth/authorize?client_id=…
+   ```
+
+6. 그 **인증 URL을 브라우저에서 열고** SmartThings 계정으로 로그인해 권한을 허용합니다. 승인하면 브라우저가 Redirect URI로 이동하고, 플러그인이 토큰을 받아 저장합니다. 이후에는 자동으로 갱신되므로 다시 할 일이 없습니다.
+
+#### 인증이 안 될 때
+
+| 증상 | 원인과 조치 |
+|---|---|
+| 워크스페이스가 Redirect URI를 거부 | `https`가 아니거나 IP 주소입니다. 도메인 + https로 등록하세요. |
+| 승인 후 브라우저가 오류 페이지 | 그 도메인이 홈브릿지 8999에 닿지 않는 것입니다. 프록시 설정을 확인하세요. |
+| 로그에 `포트 8999를 사용할 수 없습니다` | 다른 프로세스가 8999를 쓰고 있습니다. |
+| 승인은 됐는데 기기 제어가 안 됨 | 권한 세 개를 다 골랐는지 확인하고, 워크스페이스에서 고친 뒤 다시 인증하세요. |
+| `redirectUri가 유효한 URL 형식이 아닙니다` | 설정에 넣은 값에 오타가 있거나 `https://`가 빠졌습니다. |
 
 ---
 

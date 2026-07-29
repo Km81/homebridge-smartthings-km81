@@ -1102,18 +1102,24 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     return c;
   };
 
-  await t('★기기 무응답이 이어지면 꺼짐으로 보고 종료 상태를 준다 (상태 동결 방지)', async () => {
+  await t('★직전에 돌고 있지 않았으면 첫 무응답에 바로 꺼짐으로 본다 (재시작 시 즉시 반영)', async () => {
     const c = mkOfflineClient();
-    // 순단 보호: 문턱에 닿기 전에는 오류를 그대로 올려 Laundry가 직전 상태를 보존하게 한다.
-    for (let i = 0; i < 4; i++) await assert.rejects(c.getStatus(), /시간 초과/);
-    const comps = await c.getStatus();   // 5회째 연속 실패 → 꺼짐으로 판정
+    const comps = await c.getStatus();   // _lastRunning=false → 즉시 판정
     assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'stop');
     assert.ok(comps.main.washerOperatingState.remainingTime === undefined);
   });
 
+  await t('★운전 중이었으면 순단을 바로 종료로 단정하지 않는다 (거짓 종료알림 방지)', async () => {
+    const c = mkOfflineClient();
+    c._lastRunning = true;               // 직전 폴에서 운전 중이었다
+    for (let i = 0; i < 4; i++) await assert.rejects(c.getStatus(), /시간 초과/);
+    const comps = await c.getStatus();   // 5회째에야 꺼짐
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'stop');
+  });
+
   await t('★꺼짐 안내는 info이고 hb-watch 경보 문구를 쓰지 않는다 (오탐 방지)', async () => {
     const c = mkOfflineClient();
-    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});
+    await c.getStatus().catch(() => {});
     const msgs = c._logs.filter(([lv]) => lv === 'info').map(([, m]) => m);
     assert.strictEqual(msgs.length, 1, '안내가 없거나 중복이다: ' + JSON.stringify(c._logs));
     // hb-watch가 경보로 잡는 문구( '폴링 실패' / '상태 조회 실패' / '연결 실패' )가 없어야 한다
@@ -1124,12 +1130,23 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.strictEqual(c._logs.filter(([lv]) => lv === 'info').length, 1, '안내가 반복됐다');
   });
 
-  await t('★클라우드를 쓸 수 있으면 꺼짐 합성보다 클라우드를 먼저 쓴다', async () => {
-    const cloudComps = { main: { washerOperatingState: { machineState: { value: 'run' } } } };
-    const c = mkOfflineClient({ cloud: { getStatus: async () => cloudComps }, deviceId: 'W1' });
+  await t('★연결이 안 되는 것은 클라우드로 폴백하지 않는다 (상태이지 장애가 아니다)', async () => {
+    let called = false;
+    const c = mkOfflineClient({
+      cloud: { getStatus: async () => { called = true; return {}; } }, deviceId: 'W1',
+    });
     const r = await c.getStatus();
-    assert.strictEqual(r, cloudComps, '클라우드 폴백이 안 됐다');
-    assert.ok(c._logs.some(([lv, m]) => lv === 'warn' && /클라우드로 폴백/.test(m)), '폴백 경고가 없다');
+    assert.strictEqual(called, false, '전원이 꺼진 것뿐인데 클라우드를 호출했다');
+    assert.strictEqual(r.main.washerOperatingState.machineState.value, 'stop');
+  });
+
+  await t('연결은 되는데 응답이 이상하면 그때는 클라우드를 쓴다', async () => {
+    const cloudComps = { main: { washerOperatingState: { machineState: { value: 'run' } } } };
+    const c = mkOfflineClient({
+      err: '인증 실패 (status 401)',
+      cloud: { getStatus: async () => cloudComps }, deviceId: 'W1',
+    });
+    assert.strictEqual(await c.getStatus(), cloudComps, '진짜 장애인데 폴백하지 않았다');
   });
 
   await t('폴백을 끄면 클라우드를 쓰지 않는다', async () => {
@@ -1138,24 +1155,24 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
       cloud: { getStatus: async () => { called = true; return {}; } },
       deviceId: 'W1', fallbackToCloud: false,
     });
-    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});
+    await c.getStatus().catch(() => {});
     assert.strictEqual(called, false, 'fallbackToCloud=false인데 클라우드를 호출했다');
   });
 
-  await t('연결 계열이 아닌 오류는 꺼짐으로 접지 않고 올린다', async () => {
-    const c = mkOfflineClient({ err: '인증 실패 (status 401)' });
+  await t('연결 계열이 아닌 오류는 꺼짐으로 접지 않는다 (폴백도 없으면 그대로 올린다)', async () => {
+    const c = mkOfflineClient({ err: '인증 실패 (status 401)', fallbackToCloud: false });
     await assert.rejects(c.getStatus(), /401/);
     await assert.rejects(c.getStatus(), /401/, '토큰 오류를 꺼짐으로 위조했다');
   });
 
   await t('★복구되면 알린다', async () => {
     const c = mkOfflineClient();
-    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});   // 꺼짐 판정
+    await c.getStatus().catch(() => {});   // 꺼짐 판정
     c.transport.getDeviceStatus = async () => ({
       Devices: [{ Operation: { state: 'Run', power: 'On', progress: 'Wash', remainingTime: '00:10:00' } }],
     });
     await c.getStatus();
-    assert.ok(c._logs.some(([lv, m]) => lv === 'info' && /로컬 복귀/.test(m)), '복귀 알림이 없다');
+    assert.ok(c._logs.some(([lv, m]) => lv === 'info' && /전원 켜짐/.test(m)), '켜짐 알림이 없다');
   });
 
   await t('8888 기기는 파이썬 DTLS 브릿지를 띄우지 않는다 (소스 불변식)', () => {
