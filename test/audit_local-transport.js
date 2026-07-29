@@ -1193,6 +1193,43 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   });
 
 
+  // ===== 꺼져 있는 게 정상인 기기의 로그 (사용자 지적: 세탁기는 에어컨과 달라야 한다) =====
+  await t('★세탁기 무응답은 사용자 로그에 남지 않는다 (에어컨은 종전대로)', async () => {
+    const { LegacyACClient } = require('../lib/api/LegacyACClient');
+    const mk = (label, offlineIsNormal) => {
+      const out = [];
+      const lg = {
+        info: (m) => out.push(['info', m]), warn: (m) => out.push(['warn', m]),
+        error: (m) => out.push(['error', m]), debug: (m) => out.push(['debug', m]),
+      };
+      const c = new LegacyACClient('10.0.0.9', 't', lg, {
+        timeout: 20, cert: Buffer.from(''), key: Buffer.from(''), label, offlineIsNormal,
+      });
+      c._rawRequest = async () => { throw new Error('TLS 소켓 오류: connect EHOSTUNREACH 10.0.0.9:8888'); };
+      return { c, out };
+    };
+    const ALARM = /폴링 실패|상태 조회 실패|연결 실패|무응답 지속|최종 요청 실패/;
+
+    const w = mk('세탁기', true);
+    for (let n = 0; n < 12; n++) await w.c.getDeviceStatus().catch(() => {});
+    const wVisible = w.out.filter(([lv]) => lv !== 'debug');
+    assert.strictEqual(wVisible.length, 0,
+      '꺼진 세탁기가 사용자 로그를 남긴다: ' + JSON.stringify(wVisible.slice(0, 3)));
+    assert.ok(w.out.length > 0, 'debug로도 안 남으면 진단이 불가능하다');
+
+    const a = mk('거실 에어컨', false);
+    for (let n = 0; n < 12; n++) await a.c.getDeviceStatus().catch(() => {});
+    const aAlarm = a.out.filter(([lv, m]) => lv !== 'debug' && ALARM.test(m));
+    assert.ok(aAlarm.length > 0,
+      '에어컨의 무응답 경고까지 사라졌다 — 상시연결 기기는 종전대로 알려야 한다');
+  });
+
+  await t('세탁물 어댑터가 offlineIsNormal을 켜서 전송에 넘긴다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'LegacyLaundryClient.js'), 'utf8');
+    assert.ok(/offlineIsNormal:\s*true/.test(src), '세탁물 기기에 오프라인 정상 플래그가 없다');
+  });
+
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();
