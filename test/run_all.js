@@ -14,6 +14,17 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const SUITES = [
+  // ── 빠른 계약 검사 먼저 (수 초). 여기서 깨지면 아래 6분을 기다릴 이유가 없다 ──
+  // v2.4.5 신설 3종. 이번 감사에서 드러난 세 가지 사각지대를 각각 막는다:
+  //   log_volume  — "하루에 로그가 몇 줄 나오는가"를 실제 코드로 계측(액세서리 계층 포함).
+  //                 소스만 읽으면 억제 로직의 존재는 보이지만 총량은 안 보인다.
+  //   schema_ui   — 설정 화면이 실제로 그리는 필드를 재현. 스키마만 고치고 layout을
+  //                 안 고쳐 화면이 안 바뀌던 실사고를 기계로 막는다.
+  //   readme_check— 문서가 코드보다 먼저 낡는 건 못 막으니, 낡으면 깨지게 한다.
+  { file: 'log_volume.js' },
+  { file: 'schema_ui.js' },
+  { file: 'readme_check.js' },
+
   { file: 'chain_test.js' },
   { file: 'sim_ac_fail.js' },
   { file: 'sim_v1824.js' },

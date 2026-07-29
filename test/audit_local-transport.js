@@ -651,13 +651,17 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     c._verified.set(DEV, true);
     let fail = true;
     c._rpc = async () => { if (fail) throw new Error('로컬 요청 시간 초과'); return { ok: true, code: 69, data: {} }; };
-    await c.getPower(DEV);                       // 실패 → 클라우드 폴백
+    // v2.4.5 — 읽기는 **첫 연결 실패에 바로 클라우드로 넘어가지 않는다**(READ_FALLBACK_AFTER).
+    // 재시작 직후 첫 접촉이 늦는 것 하나로 매번 클라우드를 부르던 것을 없애기 위한 것이라,
+    // 첫 실패는 폴백 없이 그대로 올라온다.
+    await assert.rejects(c.getPower(DEV), /시간 초과/, '첫 실패는 유예해야 한다');
+    await c.getPower(DEV);                       // 두 번째 실패 → 클라우드 폴백
     assert.strictEqual(infos.filter(m => /로컬 복귀/.test(m)).length, 0, '아직 복귀하면 안 된다');
     fail = false;
     await c.getPower(DEV);                       // 성공 → 복귀 알림
     const rec = infos.filter(m => /로컬 복귀/.test(m));
     assert.strictEqual(rec.length, 1, '복귀 로그가 없거나 중복이다: ' + JSON.stringify(infos));
-    assert.ok(/1회 실패 후 정상화/.test(rec[0]), rec[0]);
+    assert.ok(/2회 실패 후 정상화/.test(rec[0]), rec[0]);
   });
 
   await t('복귀 로그는 한 번만 나온다 (연속 성공 시 반복 금지)', async () => {
@@ -669,6 +673,8 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     c._verified.set(DEV, true);
     let fail = true;
     c._rpc = async () => { if (fail) throw new Error('로컬 요청 시간 초과'); return { ok: true, code: 69, data: {} }; };
+    // v2.4.5 — 첫 연결 실패는 유예되어 그대로 올라온다(폴백 없음). 두 번째부터 폴백.
+    await assert.rejects(c.getPower(DEV), /시간 초과/);
     await c.getPower(DEV);
     fail = false;
     await c.getPower(DEV); await c.getPower(DEV); await c.getPower(DEV);
@@ -1093,6 +1099,9 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     c.label = '세탁기';
     c._offlineStreak = 0;
     c._offlineNotified = false;
+    c._fallbackNotified = false;
+    c._lastRunning = false;
+    c._lastCount = opts.lastCount || 1;
     c.cloud = opts.cloud || null;
     c.deviceId = opts.deviceId || null;
     c.fallbackToCloud = opts.fallbackToCloud !== false;
@@ -1101,6 +1110,134 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     c._logs = logs;
     return c;
   };
+
+  // ══ v2.4.5 적대 감사 회귀 (전부 "재현 → 수정 → 통과"를 실제로 밟은 항목) ══
+
+  // 응답을 마음대로 바꿔 가며 폴을 돌릴 수 있는 클라이언트.
+  const mkSeqClient = (opts = {}) => {
+    const c = Object.create(LegacyLaundryClient.prototype);
+    const logs = [];
+    c.log = { info: (m) => logs.push(['info', String(m)]), warn: (m) => logs.push(['warn', String(m)]),
+      error: (m) => logs.push(['error', String(m)]), debug: () => {} };
+    c.label = '세탁기';
+    c._offlineStreak = 0; c._offlineNotified = false; c._fallbackNotified = false;
+    c._lastRunning = false; c._lastCount = 1;
+    c.cloud = opts.cloud || null;
+    c.deviceId = opts.deviceId || null;
+    c.fallbackToCloud = opts.fallbackToCloud !== false;
+    c._next = opts.first;
+    c.transport = { _statusCache: null, getDeviceStatus: async () => c._next() };
+    c._logs = logs;
+    return c;
+  };
+  const UNREACH = () => { throw new Error('TLS 소켓 오류: connect EHOSTUNREACH 1.2.3.4:8888'); };
+  const OPS = (...ops) => () => ({ Devices: ops.map(o => (o ? { Operation: o } : {})) });
+
+  await t('F-2 안티주름 단계도 "운전 중"으로 세어 순단을 종료로 단정하지 않는다', async () => {
+    // machineState는 'on'으로 떨어지지만 jobState가 wrinklePrevent면 실제로는 돌고 있다.
+    // 이걸 운전 중으로 세지 않으면 순단 1폴에 즉시 꺼짐 합성 → 거짓 종료 알림.
+    const c = mkSeqClient({ first: OPS({ state: 'Ready', power: 'On', progress: 'WrinklePrevent' }) });
+    await c.getStatus();
+    assert.strictEqual(c._lastRunning, true, '안티주름을 운전 중으로 세지 않는다');
+    c._next = UNREACH;
+    await assert.rejects(c.getStatus(), /EHOSTUNREACH/, '순단 1폴에 꺼짐으로 단정했다');
+  });
+
+  await t('F-3 클라우드 폴백으로 알아낸 "운전 중"도 기억한다', async () => {
+    const cloudRun = { main: { washerOperatingState: { machineState: { value: 'run' } } } };
+    const c = mkSeqClient({
+      first: () => { throw new Error('응답 처리 실패: 알 수 없는 형식'); },
+      cloud: { getStatus: async () => cloudRun }, deviceId: 'W1',
+    });
+    await c.getStatus();
+    assert.strictEqual(c._lastRunning, true, '폴백 결과의 운전 상태를 버렸다');
+    c._next = UNREACH;
+    await assert.rejects(c.getStatus(), /EHOSTUNREACH/, '폴백 뒤 순단 1폴에 꺼짐으로 단정했다');
+  });
+
+  await t('F-6 power 키가 없을 뿐인데 꺼짐으로 판정하지 않는다', async () => {
+    const c = mkSeqClient({ first: OPS({ state: 'Run', progress: 'Wash', remainingTime: '00:30:00' }) });
+    const r = await c.getStatus();
+    assert.strictEqual(r.main.washerOperatingState.machineState.value, 'run',
+      'power 누락을 전원 꺼짐으로 오해했다 — 운전 중 거짓 종료 알림으로 이어진다');
+  });
+
+  await t('F-7 연결 계열이 아닌 실패는 오프라인 스트릭을 갉아먹지 않는다', async () => {
+    const c = mkSeqClient({
+      first: OPS({ state: 'Run', power: 'On', progress: 'Wash' }), fallbackToCloud: false,
+    });
+    await c.getStatus();
+    assert.strictEqual(c._lastRunning, true);
+    c._next = () => { throw new Error('응답 처리 실패: 알 수 없는 형식'); };
+    for (let i = 0; i < 4; i++) await c.getStatus().catch(() => {});
+    assert.strictEqual(c._offlineStreak, 0, '비연결 실패가 스트릭을 올렸다 — 방어벽 5회가 1회로 줄어든다');
+    c._next = UNREACH;
+    await assert.rejects(c.getStatus(), /EHOSTUNREACH/, '연결 실패 1회에 꺼짐으로 단정했다');
+  });
+
+  await t('F-4 꺼짐 합성은 마지막으로 본 구획 수만큼 만든다 (분리 모드 보조 구획)', async () => {
+    const c = mkSeqClient({
+      first: OPS({ state: 'Ready', power: 'On', progress: 'None' },
+        { state: 'Ready', power: 'On', progress: 'None' }),
+    });
+    const on = await c.getStatus();
+    assert.ok(on.sub, '2조 응답을 못 읽었다');
+    c._next = UNREACH;
+    const off = await c.getStatus();
+    assert.ok(off.main && off.sub,
+      '보조 구획이 사라져 분리 모드에서 11폴마다 강제전환 warn이 무한 반복된다');
+    assert.strictEqual(off.sub.washerOperatingState.machineState.value, 'stop');
+  });
+
+  await t('F-1 한 번 본 구획이 사라지면 없애지 않고 "정보 없음"으로 채운다', async () => {
+    const c = mkSeqClient({
+      first: OPS({ state: 'Run', power: 'On', progress: 'Wash' },
+        { state: 'Ready', power: 'On', progress: 'None' }),
+    });
+    await c.getStatus();
+    c._next = OPS({ state: 'Ready', power: 'On', progress: 'None' });   // 1개만 오는 부분 응답
+    const r = await c.getStatus();
+    assert.ok(r.sub, '사라진 구획을 그냥 없앴다 — 남은 구획만으로 종료가 확정돼 거짓 알림이 나간다');
+    assert.ok(!r.sub.washerOperatingState, '사라진 구획은 운전 상태를 지어내면 안 된다(UNKNOWN이어야 carry가 산다)');
+  });
+
+  await t('F-5 꺼진 기기가 타임아웃형으로 실패해도 전송 계층이 조용하다', async () => {
+    const { LegacyACClient } = require('../lib/api/LegacyACClient');
+    const logs = [];
+    const log = { info: (m) => logs.push(['info', String(m)]), warn: (m) => logs.push(['warn', String(m)]),
+      error: (m) => logs.push(['error', String(m)]), debug: () => {} };
+    const t2 = new LegacyACClient('10.88.0.1', 'x'.repeat(10), log, { timeout: 10, offlineIsNormal: true });
+    t2._rawRequest = async () => { throw new Error('요청 시간 초과 (8000ms)'); };
+    for (let i = 0; i < 12; i++) { t2._statusCache = null; await t2.getDeviceStatus().catch(() => {}); }
+    const visible = logs.filter(([lv]) => lv !== 'debug');
+    assert.strictEqual(visible.length, 0,
+      '꺼진 기기의 타임아웃이 사용자 로그로 샜다(hb-watch 오탐): ' + JSON.stringify(visible.slice(0, 3)));
+  });
+
+  await t('L-F2 순단 예외에는 _transient가 붙어 액세서리가 경보 문구를 안 낸다', async () => {
+    const c = mkSeqClient({ first: OPS({ state: 'Run', power: 'On', progress: 'Wash' }) });
+    await c.getStatus();
+    c._next = UNREACH;
+    await c.getStatus().then(
+      () => assert.fail('순단인데 꺼짐으로 단정했다'),
+      (e) => assert.strictEqual(e._transient, true,
+        '_transient가 없으면 Laundry가 "상태 폴링 오류" warn을 찍고 hb-watch가 텔레그램 경보를 낸다'));
+  });
+
+  await t('L-F8 폴백에서 복구될 때 "전원 켜짐"이라고 거짓말하지 않는다', async () => {
+    const cloudComps = { main: { washerOperatingState: { machineState: { value: 'run' } } } };
+    const c = mkSeqClient({
+      first: () => { throw new Error('인증 실패 (status 401)'); },
+      cloud: { getStatus: async () => cloudComps }, deviceId: 'W1',
+    });
+    await c.getStatus();
+    assert.ok(c._logs.some(([lv, m]) => lv === 'warn' && /클라우드로 폴백/.test(m)), '폴백 경고가 없다');
+    c._next = OPS({ state: 'Run', power: 'On', progress: 'Wash' });
+    await c.getStatus();
+    const msgs = c._logs.map(([, m]) => m).join(' | ');
+    assert.ok(!/전원 켜짐/.test(msgs), '전원은 내내 켜져 있었는데 "전원 켜짐"이라고 찍었다: ' + msgs);
+    assert.ok(/로컬 복귀/.test(msgs), '복귀 알림이 없다: ' + msgs);
+  });
 
   await t('★직전에 돌고 있지 않았으면 첫 무응답에 바로 꺼짐으로 본다 (재시작 시 즉시 반영)', async () => {
     const c = mkOfflineClient();
@@ -1203,7 +1340,13 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     const seg = src.slice(at, at + 2000);
     assert.ok(/refreshToken\(\)/.test(seg), '토큰 갱신을 호출하지 않는다 — 호출이 없으면 401도 없고 갱신도 없다');
     assert.ok(/24 \* 60 \* 60 \* 1000/.test(seg), '하루 주기가 아니다');
-    assert.ok(/usesLocal/.test(seg), '로컬 사용 여부를 보지 않는다(클라우드 상시 구성엔 불필요)');
+    assert.ok(/localDevs/.test(seg), '로컬 사용 여부를 보지 않는다(클라우드 상시 구성엔 불필요)');
+    // v2.4.5 — 폴백을 전부 끈 구성에서는 keepalive가 '마지막 남은 클라우드 호출 1회/일'이 된다.
+    // "클라우드 0회"를 원하는 사용자를 위해 그때는 아예 걸지 않는다.
+    assert.ok(/anyFallback/.test(seg), '폴백을 전부 껐는데도 토큰 갱신을 건다');
+    // 갱신은 single-flight를 거쳐야 한다 — 401 인터셉터의 갱신과 겹치면 refresh 토큰이
+    // 회전하며 늦게 도착한 쪽이 무효 토큰을 쓰게 된다.
+    assert.ok(/_refreshTokenSingleFlight/.test(seg), 'single-flight를 거치지 않아 동시 갱신 충돌 위험');
     assert.ok(!/unlink|_triggerReauth/.test(seg),
       '갱신 실패에 토큰을 파기한다 — 일시 장애로 전 기기 폴백이 죽는다');
     assert.ok(/registerShutdown/.test(seg), 'shutdown에서 타이머를 정리하지 않는다');

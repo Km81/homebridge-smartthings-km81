@@ -309,7 +309,11 @@ class SmartThingsKM81Platform {
 
   _setupLegacyAc(configDevice) {
     if (!configDevice.name || !configDevice.ip || !configDevice.token) {
-      this.log.error('잘못된 LegacyAC 설정(name, ip, token 확인):', configDevice);
+      // ⚠️configDevice를 통째로 찍지 않는다 — **token이 평문으로 로그에 남는다**(v2.4.5 감사 S-2).
+      //    무엇이 비었는지만 알려주면 진단에는 충분하다.
+      const missing = ['name', 'ip', 'token'].filter(k => !configDevice[k]);
+      this.log.error(`잘못된 구형 에어컨 설정 — 비어 있는 항목: ${missing.join(', ')}`
+        + (configDevice.name ? ` (name=${configDevice.name})` : ''));
       return;
     }
     const uuid = UUIDGen.generate(configDevice.ip + configDevice.name);
@@ -408,15 +412,27 @@ class SmartThingsKM81Platform {
   // 로컬 기기가 하나도 없으면(=클라우드를 상시 쓰는 구성) 불필요하므로 걸지 않는다.
   _startCloudKeepalive() {
     if (!this.smartthings) return;
-    const usesLocal = this.devices.some(d => d && d.transport === 'local');
-    if (!usesLocal) return;
+    const localDevs = this.devices.filter(d => d && d.transport === 'local');
+    if (!localDevs.length) return;
+    // ★폴백을 **전부** 꺼 두었으면 토큰을 살려 둘 이유가 없다(v2.4.5 감사 C-3).
+    //   이 경우 keepalive가 남으면 그게 하루 하나 남은 유일한 클라우드 호출이 된다 —
+    //   "클라우드 0회"를 원하는 구성에서 목표를 못 이루게 하는 마지막 한 건.
+    const anyFallback = localDevs.some(d => d.local?.fallbackToCloud !== false);
+    if (!anyFallback) {
+      this.log.info('모든 로컬 기기가 클라우드 폴백을 끔 — 토큰 keepalive를 걸지 않습니다 (클라우드 호출 0회).');
+      return;
+    }
 
     const DAY_MS = 24 * 60 * 60 * 1000;
     const FIRST_DELAY_MS = 30 * 60 * 1000;   // 부팅 직후 혼잡을 피해 30분 뒤 첫 실행
 
     const run = async () => {
       try {
-        await this.smartthings.refreshToken();
+        // ★single-flight 경유 (v2.4.5 감사 C-3). 직접 refreshToken()을 부르면
+        //   마침 폴백 중 401 인터셉터가 돌리는 갱신과 겹쳐 refresh POST가 2발 나갈 수 있다.
+        //   SmartThings는 refresh 토큰을 회전시키므로 늦게 도착한 쪽이 이미 소진된 토큰을 쓰게 되고,
+        //   최악의 경우 토큰 파일 삭제 + 재인증 요구까지 간다.
+        await this.smartthings._refreshTokenSingleFlight();
         this.log.info('클라우드 토큰 갱신됨 (폴백 유지용, 하루 1회)');
       } catch (e) {
         // ⚠️여기서 토큰 파일을 지우지 않는다 — 일시 장애로 유효한 토큰을 전소시키면

@@ -556,7 +556,7 @@
       "items": [
         {
           "type": "help",
-          "help": "1) SmartThings CLI(<code>npm i -g @smartthings/cli</code>) + <code>smartthings apps:create</code> 로 OAuth-In 앱 생성<br>2) Scope: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>3) Redirect URI는 <b>https 도메인만</b> (포트 X). 예: <code>https://myhome.example.com</code><br>4) 외부 443 → 내부 <code>&lt;homebridge_ip&gt;:8999</code> 로 리버스 프록시 필요<br>5) 토큰 파일: <code>smartthings_km81_token.json</code> (통합)"
+          "help": "SmartThings 개발자 워크스페이스 또는 CLI(<code>smartthings apps:create</code>)로 <b>OAuth-In</b> 앱을 만듭니다.<br>· 권한(Scope) <b>세 개 모두</b>: <code>r:devices:*</code> <code>w:devices:*</code> <code>x:devices:*</code><br>· Redirect URI는 <b>https 도메인만</b> 받습니다(포트 불가). 예: <code>https://myhome.example.com/oauth/callback</code><br>· 그 주소가 리버스 프록시를 거쳐 <b>홈브릿지의 8999 포트</b>에 닿아야 합니다.<br>· 토큰 파일: <code>smartthings_km81_token.json</code><br><b>그림과 함께 보는 자세한 절차는 README의 \"SmartThings 클라우드를 쓸 때\" 절을 보세요.</b>"
         },
         "clientId",
         "clientSecret",
@@ -638,6 +638,12 @@
         {
           "key": "devices[].cacheDurationSec",
           "type": "number",
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
+          }
+        },
+        {
+          "key": "devices[].stateDumpFile",
           "condition": {
             "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='legacyAc';"
           }
