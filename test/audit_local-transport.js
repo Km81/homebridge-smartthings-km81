@@ -616,6 +616,85 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     }
   });
 
+  // ===== v2.3.6 로그 최적화 (사용자 지적) =====
+  await t('브릿지 로그의 IP가 기기 라벨로 치환된다 ([로컬]→[건조기])', () => {
+    const lines = [];
+    const c = new LocalApplianceClient(
+      { info: (m) => lines.push(['info', m]), warn: (m) => lines.push(['warn', m]),
+        error: (m) => lines.push(['error', m]), debug: (m) => lines.push(['debug', m]) }, {});
+    c.registerDevice(DEV, { host: '10.0.0.1', port: 49154, label: '건조기' });
+    lines.length = 0;
+    c._relayBridgeLog({ event: 'log', message: '로컬 세션 연결됨 10.0.0.1:49154', level: 'debug' });
+    assert.strictEqual(lines.length, 1);
+    const [lvl, msg] = lines[0];
+    assert.strictEqual(lvl, 'debug', '레벨이 반영되지 않았다: ' + lvl);
+    assert.ok(msg.startsWith('[건조기]'), 'IP가 라벨로 치환되지 않았다: ' + msg);
+    assert.ok(!msg.includes('10.0.0.1'), 'IP가 남아 있다: ' + msg);
+    assert.ok(msg.includes('49154'), '포트는 남아야 한다: ' + msg);
+  });
+
+  await t('모르는 IP의 브릿지 로그는 [로컬] 태그와 info로 유지된다 (하위 호환)', () => {
+    const lines = [];
+    const c = new LocalApplianceClient(
+      { info: (m) => lines.push(['info', m]), warn: () => {}, error: () => {}, debug: (m) => lines.push(['debug', m]) }, {});
+    c._relayBridgeLog({ event: 'log', message: '알 수 없는 사건 10.9.9.9' });   // level 없음
+    assert.strictEqual(lines[0][0], 'info', 'level 없는 옛 메시지는 info여야 한다');
+    assert.ok(lines[0][1].startsWith('[로컬]'), lines[0][1]);
+  });
+
+  await t('로컬 폴백 뒤 성공하면 복귀 로그가 나온다', async () => {
+    const infos = [];
+    const c = new LocalApplianceClient(
+      { info: (m) => infos.push(m), warn: () => {}, error: () => {}, debug: () => {} },
+      { cloudClient: { getPower: async () => true } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    let fail = true;
+    c._rpc = async () => { if (fail) throw new Error('로컬 요청 시간 초과'); return { ok: true, code: 69, data: {} }; };
+    await c.getPower(DEV);                       // 실패 → 클라우드 폴백
+    assert.strictEqual(infos.filter(m => /로컬 복귀/.test(m)).length, 0, '아직 복귀하면 안 된다');
+    fail = false;
+    await c.getPower(DEV);                       // 성공 → 복귀 알림
+    const rec = infos.filter(m => /로컬 복귀/.test(m));
+    assert.strictEqual(rec.length, 1, '복귀 로그가 없거나 중복이다: ' + JSON.stringify(infos));
+    assert.ok(/1회 실패 후 정상화/.test(rec[0]), rec[0]);
+  });
+
+  await t('복귀 로그는 한 번만 나온다 (연속 성공 시 반복 금지)', async () => {
+    const infos = [];
+    const c = new LocalApplianceClient(
+      { info: (m) => infos.push(m), warn: () => {}, error: () => {}, debug: () => {} },
+      { cloudClient: { getPower: async () => true } });
+    c.registerDevice(DEV, devInfo);
+    c._verified.set(DEV, true);
+    let fail = true;
+    c._rpc = async () => { if (fail) throw new Error('로컬 요청 시간 초과'); return { ok: true, code: 69, data: {} }; };
+    await c.getPower(DEV);
+    fail = false;
+    await c.getPower(DEV); await c.getPower(DEV); await c.getPower(DEV);
+    assert.strictEqual(infos.filter(m => /로컬 복귀/.test(m)).length, 1,
+      '복귀 로그가 반복됐다: ' + JSON.stringify(infos.filter(m => /로컬 복귀/.test(m))));
+  });
+
+  await t('브릿지가 동일 메시지 폭주를 억제한다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'local', 'bridge.py'), 'utf8');
+    assert.ok(/_LOG_DEDUPE_SEC/.test(src) && /def log\(msg, level=/.test(src),
+      'bridge.py의 로그 억제/레벨 인자가 사라졌다');
+    // 정상 동작인 세션 로그는 debug로 내려가 있어야 한다
+    assert.ok(/로컬 세션 연결됨 %s" % k, "debug"/.test(src), '세션 연결 로그가 info로 되돌아갔다');
+    assert.ok(/로컬 세션 해제 %s" % k, "debug"/.test(src), '세션 해제 로그가 info로 되돌아갔다');
+  });
+
+  await t('클라우드 계층이 UUID 대신 기기 이름으로 찍는다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'SmartThingsClient.js'), 'utf8');
+    const seg = src.slice(src.indexOf('_statusFailStreaks.set(deviceId, streak)'));
+    const head = seg.slice(0, 900);
+    assert.ok(!/\[\$\{deviceId\}\] 상태 조회/.test(head),
+      '상태 조회 실패/복구 로그가 아직 UUID를 쓴다 — hb-watch 오탐 재발');
+    assert.ok(/_labelOf\(deviceId\)/.test(head), '_labelOf로 라벨을 쓰지 않는다');
+    assert.ok(/원인 불명/.test(head), '빈 오류 메시지 대체 문구가 없다');
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();

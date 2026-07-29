@@ -21,6 +21,7 @@ import ssl
 import socket
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.environ.get("KM81_LOCAL_LIB", "/homebridge/.km81-local/lib"))
 
@@ -46,8 +47,25 @@ def emit(obj):
         sys.stdout.flush()
 
 
-def log(msg):
-    emit({"event": "log", "message": msg})
+# v2.3.6 — 로그 레벨 + 동일 메시지 폭주 억제.
+# 네트워크가 끊기면 요청마다 같은 줄이 찍혀(2026-07-28 23:10 순단 때 한 초에 4줄) 정작
+# 중요한 폴백/복귀 줄이 묻혔다. 같은 문장이 이 시간 안에 다시 나오면 삼킨다.
+_LOG_DEDUPE_SEC = 15.0
+_last_log = {}
+_log_lock = threading.Lock()
+
+
+def log(msg, level="info"):
+    now = time.time()
+    with _log_lock:
+        if now - _last_log.get(msg, 0.0) < _LOG_DEDUPE_SEC:
+            return
+        _last_log[msg] = now
+        if len(_last_log) > 200:          # 무한 증식 방지
+            for k, t in list(_last_log.items()):
+                if now - t > _LOG_DEDUPE_SEC * 4:
+                    _last_log.pop(k, None)
+    emit({"event": "log", "message": msg, "level": level})
 
 
 # ---------- 인증서 발급 ----------
@@ -212,12 +230,14 @@ def session_for(host, port, cert, key, local_port=None):
         except OSError as e:
             # 그 포트를 다른 프로세스가 이미 쓰고 있으면 임의 포트로 물러선다
             # (유령 세션 이점은 잃지만 연결 자체는 살린다).
-            log("고정 송신 포트 %d 사용 불가(%s) — 임의 포트로 연결" % (lp, e))
+            # 유령 세션 회피 실패는 설계상 예상된 우회 경로다(정상 동작) → debug.
+            # 진짜 문제라면 뒤따르는 폴백 경고가 알려 준다.
+            log("고정 송신 포트 %d 사용 불가(%s) — 임의 포트로 연결" % (lp, e), "debug")
             s = DtlsCoapSession(host, port, cert_path=cert, key_path=key)
             s.connect()
         s.start_reader()
         _sessions[k] = s
-        log("로컬 세션 연결됨 %s" % k)
+        log("로컬 세션 연결됨 %s" % k, "debug")
         return s, lock
 
 
@@ -240,7 +260,7 @@ def drop_session(host, port):
             s.close()
         except Exception:
             pass
-        log("로컬 세션 해제 %s" % k)
+        log("로컬 세션 해제 %s" % k, "debug")
 
 
 def handle(req, cert, key):
