@@ -951,6 +951,233 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.strictEqual(l.units[0].state.duration, 18 * 60, '잔여시간이 시드되지 않았다: ' + l.units[0].state.duration);
   });
 
+  // ===== 세탁기 8888(구형 토큰) 경로 =====
+  const LegacyLaundryClient = require('../lib/api/LegacyLaundryClient');
+
+  // 실기기 응답을 픽스처로 고정한다(2026-07-29 실측). 형태가 바뀌면 여기서 걸린다.
+  const REAL_RESPONSE = {
+    Devices: [
+      { Operation: { state: 'Ready', power: 'Off', progress: 'None', progressPercentage: 1, remainingTime: '00:52:00' },
+        Washer: { waterTemperature: 'Cold', rinseCycles: 2 } },
+      { Operation: { state: 'Ready', power: 'On', progress: 'None', progressPercentage: 1, remainingTime: '01:09:00' },
+        Washer: { waterTemperature: '40', rinseCycles: 3, spinLevel: 'High' } },
+    ],
+  };
+
+  const mkLaundryClient = (response) => {
+    const c = Object.create(LegacyLaundryClient.prototype);
+    c.log = silentLog;
+    c.transport = { getDeviceStatus: async () => response, _statusCache: { json: '{}', ts: 1 } };
+    return c;
+  };
+
+  await t('8888 응답이 Laundry가 읽는 컴포넌트 형태로 변환된다', async () => {
+    const comps = await mkLaundryClient(REAL_RESPONSE).getStatus();
+    assert.deepStrictEqual(Object.keys(comps).sort(), ['main', 'sub']);
+    // Laundry의 pickOperatingState가 찾는 키가 실제로 있어야 한다(v2.3.2 죽은 코드 사고 방지)
+    for (const k of ['main', 'sub']) {
+      assert.ok(comps[k].washerOperatingState, k + '에 washerOperatingState 없음');
+      assert.ok(comps[k].dryerOperatingState, k + '에 dryerOperatingState 없음');
+      assert.ok('machineState' in comps[k].washerOperatingState, 'machineState 없음');
+      assert.ok('washerJobState' in comps[k].washerOperatingState, 'washerJobState 없음');
+      // ★잔여시간은 운전 중일 때만 넣는다(감사 D-1). 대기 상태에선 키가 없는 게 정상 —
+      //   0을 넣으면 소비자가 '정보 없음'으로 접어 직전 값을 매 폴 재푸시한다.
+      assert.ok(!('remainingTime' in comps[k].washerOperatingState),
+        '대기 상태인데 remainingTime이 들어 있다');
+    }
+  });
+
+  await t('★전원이 꺼져 있으면 stop, 켜져 있고 애매하면 on (종료 알림 조기발사 방지)', async () => {
+    const comps = await mkLaundryClient(REAL_RESPONSE).getStatus();
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'stop', '전원 Off인데 stop이 아니다');
+    // 전원 On + state=Ready는 'stop'으로 단정하면 안 된다 — jobState 판정이 살아 있어야 한다
+    assert.strictEqual(comps.sub.washerOperatingState.machineState.value, 'on',
+      '전원 On인데 stop으로 단정했다 — 안티주름 단계에서 종료 알림이 조기 발사된다');
+  });
+
+  await t('운전/일시정지는 run/pause로 매핑되고 잔여시간이 살아난다', async () => {
+    const comps = await mkLaundryClient({ Devices: [
+      { Operation: { state: 'Run', power: 'On', progress: 'Wash', remainingTime: '00:45:00' } },
+      { Operation: { state: 'Pause', power: 'On', progress: 'Rinse', remainingTime: '00:20:00' } },
+    ] }).getStatus();
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'run');
+    assert.strictEqual(comps.sub.washerOperatingState.machineState.value, 'pause');
+    assert.strictEqual(comps.main.washerOperatingState.remainingTime.value, 45);
+    assert.strictEqual(comps.sub.washerOperatingState.remainingTime.value, 20, '일시정지에서 잔여시간이 죽었다');
+  });
+
+  await t('★운전 중이 아니면 잔여시간 키를 아예 빼서 정보 없음으로 준다 (감사 D-1)', async () => {
+    const comps = await mkLaundryClient(REAL_RESPONSE).getStatus();
+    assert.strictEqual(comps.main.washerOperatingState.remainingTime, undefined);
+    assert.strictEqual(comps.sub.washerOperatingState.remainingTime, undefined);
+  });
+
+  await t('단일조 기기(Devices 1개)는 sub 없이 main만 준다', async () => {
+    const comps = await mkLaundryClient({ Devices: [
+      { Operation: { state: 'Run', power: 'On', progress: 'Wash', remainingTime: '00:30:00' } },
+    ] }).getStatus();
+    assert.deepStrictEqual(Object.keys(comps), ['main']);
+  });
+
+  await t('Devices가 비었으면 조용히 성공하지 않고 오류를 낸다', async () => {
+    await assert.rejects(mkLaundryClient({ Devices: [] }).getStatus(), /Devices/);
+    await assert.rejects(mkLaundryClient({}).getStatus(), /Devices/);
+  });
+
+  await t('★Operation이 없으면 꺼짐으로 위조하지 않는다 (감사 F2 — 조기 종료알림 방지)', async () => {
+    const comps = await mkLaundryClient({ Devices: [{}] }).getStatus();
+    assert.strictEqual(comps.main.washerOperatingState, undefined,
+      '정보가 없는데 운전 상태를 지어냈다 — stop이면 즉시 종료로 확정된다');
+    // Laundry가 UNKNOWN으로 읽어 직전 상태를 보존해야 한다
+    const { l } = await runLaundry({ enableNotificationSensor: false }, comps);
+    assert.strictEqual(l.units[0].state.state, 'UNKNOWN');
+  });
+
+  await t('전원 표기 대소문자가 달라도 인식한다', async () => {
+    const comps = await mkLaundryClient({ Devices: [
+      { Operation: { state: 'run', power: 'ON', progress: 'Wash', remainingTime: '00:10:00' } },
+    ] }).getStatus();
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'run');
+  });
+
+  await t('invalidateStatusCache가 전송 캐시를 실제로 비운다', async () => {
+    const c = mkLaundryClient(REAL_RESPONSE);
+    assert.ok(c.transport._statusCache, '사전 조건 불성립');
+    c.invalidateStatusCache();
+    assert.strictEqual(c.transport._statusCache, null, '캐시가 안 비워졌다 — 폴링이 낡은 값을 받는다');
+  });
+
+  await t('★8888 경로 결과가 Laundry 분류를 통과한다 (소비 지점 도달 확인)', async () => {
+    const comps = await mkLaundryClient({ Devices: [
+      { Operation: { state: 'Run', power: 'On', progress: 'Wash', remainingTime: '00:40:00' } },
+      { Operation: { state: 'Ready', power: 'Off', progress: 'None', remainingTime: '00:00:00' } },
+    ] }).getStatus();
+    const { l } = await runLaundry({ enableNotificationSensor: false, splitCompartments: true }, comps);
+    assert.strictEqual(l.units[0].state.active, true, '운전 중인 조가 가동으로 안 잡혔다');
+    assert.strictEqual(l.units[0].state.duration, 40 * 60, '잔여시간이 초로 환산되지 않았다');
+    assert.strictEqual(l.units[1].state.active, false);
+  });
+
+  await t('설정 UI에 세탁기 로컬(토큰) 항목이 노출된다', () => {
+    const sc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    assert.ok(sc.schema.properties.devices.items.properties.local.properties.token, 'local.token 스키마 없음');
+    const nodes = [];
+    const walk = (n) => {
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (!n || typeof n !== 'object') return;
+      if (n.key) nodes.push(n);
+      for (const v of Object.values(n)) if (v && typeof v === 'object') walk(v);
+    };
+    walk(sc.layout);
+    const run = (key, dev) => {
+      const nd = nodes.find(x => x.key === key);
+      assert.ok(nd, key + ' layout 없음');
+      const fb = nd.condition && nd.condition.functionBody;
+      return fb ? !!new Function('model', 'arrayIndices', fb)({ devices: [dev] }, [0]) : true;
+    };
+    // 세탁기 + 로컬에서만 토큰 칸이 보여야 한다
+    assert.strictEqual(run('devices[].local.token', { deviceType: 'washer', transport: 'local' }), true);
+    assert.strictEqual(run('devices[].local.token', { deviceType: 'washer', transport: 'cloud' }), false);
+    assert.strictEqual(run('devices[].local.token', { deviceType: 'dryer', transport: 'local' }), false,
+      '건조기(DTLS)에 토큰 칸이 보인다');
+    // 전송 경로가 세탁기에 되살아났는지
+    assert.strictEqual(run('devices[].transport', { deviceType: 'washer' }), true, '세탁기에 전송 경로가 없다');
+  });
+
+  // ===== 8888 기기 무응답 처리 (감사 D1/D2 — 세탁기는 꺼지면 사라지는 게 정상) =====
+  const mkOfflineClient = (opts = {}) => {
+    const c = Object.create(LegacyLaundryClient.prototype);
+    const logs = [];
+    c.log = { info: (m) => logs.push(['info', m]), warn: (m) => logs.push(['warn', m]),
+      error: (m) => logs.push(['error', m]), debug: () => {} };
+    c.label = '세탁기';
+    c._offlineStreak = 0;
+    c._offlineNotified = false;
+    c.cloud = opts.cloud || null;
+    c.deviceId = opts.deviceId || null;
+    c.fallbackToCloud = opts.fallbackToCloud !== false;
+    c.transport = { getDeviceStatus: async () => { throw new Error(opts.err || '요청 시간 초과'); },
+      _statusCache: null };
+    c._logs = logs;
+    return c;
+  };
+
+  await t('★기기 무응답이 이어지면 꺼짐으로 보고 종료 상태를 준다 (상태 동결 방지)', async () => {
+    const c = mkOfflineClient();
+    // 순단 보호: 문턱에 닿기 전에는 오류를 그대로 올려 Laundry가 직전 상태를 보존하게 한다.
+    for (let i = 0; i < 4; i++) await assert.rejects(c.getStatus(), /시간 초과/);
+    const comps = await c.getStatus();   // 5회째 연속 실패 → 꺼짐으로 판정
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'stop');
+    assert.ok(comps.main.washerOperatingState.remainingTime === undefined);
+  });
+
+  await t('★꺼짐 안내는 info이고 hb-watch 경보 문구를 쓰지 않는다 (오탐 방지)', async () => {
+    const c = mkOfflineClient();
+    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});
+    const msgs = c._logs.filter(([lv]) => lv === 'info').map(([, m]) => m);
+    assert.strictEqual(msgs.length, 1, '안내가 없거나 중복이다: ' + JSON.stringify(c._logs));
+    // hb-watch가 경보로 잡는 문구( '폴링 실패' / '상태 조회 실패' / '연결 실패' )가 없어야 한다
+    assert.ok(!/폴링 실패|상태 조회 실패|연결 실패|오류/.test(msgs[0]),
+      'hb-watch 경보 정규식에 걸리는 문구다: ' + msgs[0]);
+    // 반복 폴에서 같은 안내가 계속 찍히면 안 된다
+    await c.getStatus();
+    assert.strictEqual(c._logs.filter(([lv]) => lv === 'info').length, 1, '안내가 반복됐다');
+  });
+
+  await t('★클라우드를 쓸 수 있으면 꺼짐 합성보다 클라우드를 먼저 쓴다', async () => {
+    const cloudComps = { main: { washerOperatingState: { machineState: { value: 'run' } } } };
+    const c = mkOfflineClient({ cloud: { getStatus: async () => cloudComps }, deviceId: 'W1' });
+    const r = await c.getStatus();
+    assert.strictEqual(r, cloudComps, '클라우드 폴백이 안 됐다');
+    assert.ok(c._logs.some(([lv, m]) => lv === 'warn' && /클라우드로 폴백/.test(m)), '폴백 경고가 없다');
+  });
+
+  await t('폴백을 끄면 클라우드를 쓰지 않는다', async () => {
+    let called = false;
+    const c = mkOfflineClient({
+      cloud: { getStatus: async () => { called = true; return {}; } },
+      deviceId: 'W1', fallbackToCloud: false,
+    });
+    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});
+    assert.strictEqual(called, false, 'fallbackToCloud=false인데 클라우드를 호출했다');
+  });
+
+  await t('연결 계열이 아닌 오류는 꺼짐으로 접지 않고 올린다', async () => {
+    const c = mkOfflineClient({ err: '인증 실패 (status 401)' });
+    await assert.rejects(c.getStatus(), /401/);
+    await assert.rejects(c.getStatus(), /401/, '토큰 오류를 꺼짐으로 위조했다');
+  });
+
+  await t('★복구되면 알린다', async () => {
+    const c = mkOfflineClient();
+    for (let i = 0; i < 5; i++) await c.getStatus().catch(() => {});   // 꺼짐 판정
+    c.transport.getDeviceStatus = async () => ({
+      Devices: [{ Operation: { state: 'Run', power: 'On', progress: 'Wash', remainingTime: '00:10:00' } }],
+    });
+    await c.getStatus();
+    assert.ok(c._logs.some(([lv, m]) => lv === 'info' && /로컬 복귀/.test(m)), '복귀 알림이 없다');
+  });
+
+  await t('8888 기기는 파이썬 DTLS 브릿지를 띄우지 않는다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/transport === 'local' && !d\?\.local\?\.token/.test(src),
+      '8888 기기가 브릿지 기동 조건에서 제외되지 않았다');
+  });
+
+  await t('부팅 실패가 홈브릿지 전체를 죽이지 않는다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const seg = src.slice(src.indexOf("didFinishLaunching'"), src.indexOf("didFinishLaunching'") + 260);
+    assert.ok(/\.catch\(/.test(seg), 'didFinishLaunching에 catch가 없다 — 미처리 거부로 프로세스가 죽는다');
+    assert.ok(/new LegacyLaundryClient[\s\S]{0,600}?catch/.test(src),
+      '8888 클라이언트 생성이 try/catch로 감싸이지 않았다 — 인증서 오류가 전 기기를 죽인다');
+  });
+
+  await t('세탁기/건조기가 아닌 기기에 토큰이 있어도 8888로 가지 않는다 (소스 불변식)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/deviceType !== 'washer' && configDevice\.deviceType !== 'dryer'/.test(src),
+      '토큰만 보고 전송을 가르면 오설정 기기가 통째로 죽는다');
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();

@@ -7,6 +7,8 @@ const OAuthServer = require('./lib/auth/OAuthServer');
 const LegacyAC = require('./lib/accessories/LegacyAC');
 const SmartAC = require('./lib/accessories/SmartAC');
 const Laundry = require('./lib/accessories/Laundry');
+const LegacyLaundryClient = require('./lib/api/LegacyLaundryClient');
+const path = require('path');
 
 const PLATFORM_NAME = 'SmartThingsKM81';
 const PLUGIN_NAME = 'homebridge-smartthings-km81';
@@ -54,6 +56,8 @@ class SmartThingsKM81Platform {
     this.api = api;
     this.accessories = [];
     this.activeUUIDs = new Set();
+    // 구형 8888 세탁물 클라이언트 — IP당 1개 공유(기기가 동시 연결을 못 견딘다).
+    this._legacyLaundryClients = new Map();
     this.shutdownHandlers = [];
     this.legacyLogics = [];
     this.PLUGIN_NAME = PLUGIN_NAME;
@@ -101,7 +105,10 @@ class SmartThingsKM81Platform {
     // listener/타이머가 중복 등록되지 않도록 한다.
     this._boundAccessoryIds = new Set();
 
-    this.api.once('didFinishLaunching', () => this._didFinishLaunching());
+    // ★미처리 거부가 되면 Node가 프로세스를 내린다 — 기기 하나의 설정 오류로 홈브릿지 전체가
+    // 죽는 것을 막는다(적대 감사 D1/D5).
+    this.api.once('didFinishLaunching', () => this._didFinishLaunching()
+      .catch(e => this.log.error(`장치 초기화 중 오류: ${e.message}`)));
     this.api.once('shutdown', () => this._shutdown());
   }
 
@@ -137,7 +144,9 @@ class SmartThingsKM81Platform {
 
     // 2-a) 로컬 전송(DTLS-CoAP)을 쓰는 기기가 있으면 브릿지를 먼저 띄운다.
     // 실패해도 치명적이지 않다 — 각 기기는 클라우드로 폴백한다.
-    const localDevices = stDevices.filter(d => d?.transport === 'local');
+    // ★8888 토큰 기기는 파이썬 DTLS 브릿지가 필요 없다 — 이걸 빼지 않으면 세탁기 하나 때문에
+    // pip 설치(최대 180초)와 기동 대기가 헛돈다(적대 감사 D4).
+    const localDevices = stDevices.filter(d => d?.transport === 'local' && !d?.local?.token);
     if (localDevices.length > 0) {
       this.localClient = new LocalApplianceClient(this.log, {
         cloudClient: this.smartthings,
@@ -390,6 +399,46 @@ class SmartThingsKM81Platform {
   _clientFor(configDevice, deviceId) {
     if (configDevice.transport !== 'local') return this.smartthings;
     const cfg = configDevice.local || {};
+
+    // ★구형 8888 경로 — 토큰이 있으면 이쪽이다(2026-07-29 세탁기 실기기 검증).
+    // 신형(DTLS-CoAP)은 토큰이 없고, 구형 8888은 기기별 토큰이 반드시 필요하다.
+    // 그래서 토큰 유무만으로 갈라도 모호하지 않다 — 전송 선택지를 늘리지 않기 위한 설계.
+    // 전송 자체는 구형 에어컨과 **같은 LegacyACClient**를 재사용한다(중복 구현·인증서 중복 관리 금지).
+    if (cfg.token) {
+      // ★기기 종류 가드 — 토큰만 보고 갈랐더니, 실수로 다른 기기에 토큰이 들어가면
+      // 그 기기가 DTLS에도 클라우드에도 등록되지 않아 **통째로 죽었다**(적대 감사 D2).
+      if (configDevice.deviceType !== 'washer' && configDevice.deviceType !== 'dryer') {
+        this.log.warn(`[${configDevice.deviceLabel}] 이 기기는 8888 토큰 방식을 쓰지 않습니다 — 토큰을 무시하고 기존 로컬 경로로 진행합니다.`);
+      } else if (!cfg.host) {
+        this.log.warn(`[${configDevice.deviceLabel}] 로컬(8888)을 요청했지만 기기 IP가 없어 클라우드로 동작합니다.`);
+        return this.smartthings;
+      } else {
+        const key = `${cfg.host}:8888`;
+        if (!this._legacyLaundryClients.has(key)) {
+          // ★인증서 읽기는 동기 throw다. 여기서 새어 나가면 `didFinishLaunching`이 거부되어
+          // **전 기기 바인딩이 중단**된다(적대 감사 D1/D5 — 세탁기 설정 하나로 플랫폼 전멸).
+          // 구형 에어컨은 같은 상황을 try/catch로 막아 두었는데 이 경로만 무방비였다.
+          try {
+            this._legacyLaundryClients.set(key, new LegacyLaundryClient(this.log, {
+              ip: cfg.host,
+              token: cfg.token,
+              label: configDevice.deviceLabel,
+              timeout: configDevice.timeout,
+              certPath: configDevice.certPath || path.join(PACKAGE_ROOT, 'cert', 'cert.pem'),
+              cloudClient: this.smartthings,
+              deviceId,
+              fallbackToCloud: cfg.fallbackToCloud !== false,
+            }));
+            this.log.info(`[${configDevice.deviceLabel}] 로컬 경로 등록 — ${cfg.host}:8888 (토큰 방식)`);
+          } catch (e) {
+            this.log.error(`[${configDevice.deviceLabel}] 로컬(8888) 준비 실패 — 클라우드로 동작합니다: ${e.message}`);
+            return this.smartthings;
+          }
+        }
+        return this._legacyLaundryClients.get(key);
+      }
+    }
+
     // port는 선택이다 — 비워두면 브릿지가 49152~49160을 탐지한다.
     if (!this.localClient || !cfg.host) {
       this.log.warn(`[${configDevice.deviceLabel}] 로컬 전송을 요청했지만 준비되지 않아 클라우드로 동작합니다 (기기 IP 확인).`);

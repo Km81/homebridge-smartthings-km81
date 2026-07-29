@@ -413,7 +413,7 @@
               "description": "운전 종료를 감지하는 확인 주기."
             },
             "transport": {
-              "title": "전송 경로",
+              "title": "[SmartThings] 전송 경로",
               "type": "string",
               "default": "cloud",
               "oneOf": [
@@ -433,7 +433,7 @@
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               },
-              "description": "로컬 = 기기와 LAN에서 직접 통신 (2023년 이후 삼성 가전).",
+              "description": "로컬 = 같은 네트워크에서 기기와 직접 통신합니다.",
               "required": true
             },
             "local": {
@@ -441,11 +441,11 @@
               "type": "object",
               "properties": {
                 "host": {
-                  "title": "기기 IP",
+                  "title": "[SmartThings] 기기 IP",
                   "type": "string",
                   "placeholder": "192.168.1.78",
                   "required": false,
-                  "description": "공유기에서 고정 IP로 잡아두세요. 포트는 자동으로 찾습니다."
+                  "description": "공유기에서 고정 IP로 잡아두세요. 로컬을 쓰려면 필수입니다."
                 },
                 "port": {
                   "title": "DTLS 포트 (선택)",
@@ -459,10 +459,15 @@
                   "description": "(고급) 비워두면 기기 IP로부터 자동 결정."
                 },
                 "fallbackToCloud": {
-                  "title": "로컬 실패 시 클라우드로 폴백",
+                  "title": "[SmartThings] 로컬 실패 시 클라우드 사용",
                   "type": "boolean",
                   "default": true,
                   "description": "로컬이 실패하면 클라우드로 대신 처리합니다."
+                },
+                "token": {
+                  "title": "[세탁기] 기기 토큰",
+                  "type": "string",
+                  "description": "세탁기 전원·스마트컨트롤을 켠 상태에서 추출한 토큰. 비우면 클라우드로 동작합니다."
                 }
               }
             },
@@ -663,19 +668,25 @@
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType);"
           }
         },
         {
           "key": "devices[].local.host",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
+          }
+        },
+        {
+          "key": "devices[].local.token",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && d.deviceType === 'washer' && d.transport === 'local';"
           }
         },
         {
           "key": "devices[].local.fallbackToCloud",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].transport==='local';"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
           }
         },
         {
