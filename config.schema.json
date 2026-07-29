@@ -202,7 +202,7 @@
                   ]
                 }
               ],
-              "description": "HomeKit 스윙 토글이 어떤 실제 기능에 연결될지 선택합니다. '사용 안 함'을 선택하면 HomeKit 타일에서 스윙 버튼이 사라집니다."
+              "description": "홈킷 스윙 토글에 연결할 기능. '사용 안 함'이면 버튼이 사라집니다."
             },
             "legacyLockBinding": {
               "title": "[구형 AC] 어린이 보호용 잠금장치 ↔ 기능",
@@ -222,7 +222,7 @@
                   ]
                 }
               ],
-              "description": "HomeKit 잠금 토글이 어떤 실제 기능에 연결될지 선택합니다. '사용 안 함'을 선택하면 HomeKit 잠금 토글이 사라집니다."
+              "description": "홈킷 잠금 토글에 연결할 기능. '사용 안 함'이면 토글이 사라집니다."
             },
             "legacyOnGuardMs": {
               "title": "[구형 AC] 전원 ON 직후 보호 시간 (ms)",
@@ -403,10 +403,10 @@
             "sensorName": {
               "title": "[세탁/건조기] 종료 알림 센서 이름",
               "type": "string",
-              "description": "HomeKit에 표시될 모션 센서 이름. 비워두면 '{장치명} 종료알림'으로 자동 생성됩니다."
+              "description": "비워두면 '<장치 이름> 종료알림'."
             },
             "sensorPollInterval": {
-              "title": "[세탁/건조기] 상태 폴링 간격(초)",
+              "title": "[세탁/건조기] 상태 폴링 간격 (초)",
               "type": "integer",
               "default": 30,
               "minimum": 5,
@@ -498,6 +498,24 @@
               "type": "number",
               "placeholder": "30",
               "description": "이 시간 안에는 마지막 값을 재사용합니다. 비워두면 30초."
+            },
+            "splitCompartments": {
+              "title": "[세탁기] 세탁조를 따로 표시",
+              "type": "boolean",
+              "default": false,
+              "description": "2-in-1 세탁기를 홈킷에 두 개로 나눕니다. 끄면 하나로 합칩니다."
+            },
+            "mainCompartmentName": {
+              "title": "[세탁기] 메인 세탁조 이름",
+              "type": "string",
+              "placeholder": "세탁기 메인",
+              "description": "비워두면 \"<장치 이름> 메인\"."
+            },
+            "subCompartmentName": {
+              "title": "[세탁기] 보조 세탁조 이름",
+              "type": "string",
+              "placeholder": "세탁기 보조",
+              "description": "비워두면 \"<장치 이름> 보조\"."
             }
           },
           "required": [
@@ -884,13 +902,31 @@
         {
           "key": "devices[].sensorName",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['washer','dryer'].includes(d.deviceType) && !!d.enableNotificationSensor && !(d.deviceType === 'washer' && d.splitCompartments === true);"
           }
         },
         {
           "key": "devices[].sensorPollInterval",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType) && model.devices[arrayIndices[0]].enableNotificationSensor;"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['washer','dryer'].includes(d.deviceType);"
+          }
+        },
+        {
+          "key": "devices[].splitCompartments",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && d.deviceType === 'washer';"
+          }
+        },
+        {
+          "key": "devices[].mainCompartmentName",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && d.deviceType === 'washer' && d.splitCompartments === true;"
+          }
+        },
+        {
+          "key": "devices[].subCompartmentName",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && d.deviceType === 'washer' && d.splitCompartments === true;"
           }
         },
         {

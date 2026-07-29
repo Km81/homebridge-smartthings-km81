@@ -695,6 +695,262 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(/원인 불명/.test(head), '빈 오류 메시지 대체 문구가 없다');
   });
 
+  // ===== v2.4.0 2-in-1 세탁조 분리/합침 =====
+  const Laundry = require('../lib/accessories/Laundry');
+
+  // 최소 홈브릿지 하네스 — 액세서리/서비스/특성을 흉내 낸다.
+  function mkHarness() {
+    const chars = {};
+    const mkChar = (name) => {
+      const c = {
+        name, value: null, listeners: {},
+        on(ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); return this; },
+        removeAllListeners(ev) { delete this.listeners[ev]; return this; },
+        setProps() { return this; },
+        updateValue(v) { this.value = v; return this; },
+      };
+      return c;
+    };
+    const mkService = (displayName) => ({
+      displayName, _c: {},
+      getCharacteristic(k) { return (this._c[k] = this._c[k] || mkChar(k)); },
+      setCharacteristic(k, v) { this.getCharacteristic(k).value = v; return this; },
+      updateCharacteristic(k, v) { this.getCharacteristic(k).value = v; return this; },
+    });
+    const mkAccessory = (displayName, uuid) => {
+      const a = {
+        displayName, UUID: uuid, context: {}, _s: new Map(),
+        getService(t) { return this._s.get(t) || null; },
+        addService(t, name) { const sv = mkService(name || displayName); this._s.set(t, sv); return sv; },
+      };
+      // 실제 홈브릿지 액세서리는 AccessoryInformation을 항상 갖고 있다.
+      a.addService('AccessoryInformation', displayName);
+      return a;
+    };
+    const C = new Proxy({}, { get: (_t, k) => {
+      if (k === 'Active') return Object.assign('Active', { ACTIVE: 1, INACTIVE: 0 });
+      if (k === 'InUse') return Object.assign('InUse', { IN_USE: 1, NOT_IN_USE: 0 });
+      if (k === 'ValveType') return Object.assign('ValveType', { IRRIGATION: 1 });
+      return String(k);
+    } });
+    const Service = new Proxy({}, { get: (_t, k) => String(k) });
+    const registered = [];
+    const api = {
+      hap: { Service, Characteristic: C, uuid: { generate: (s2) => 'uuid:' + s2 }, Perms: {} },
+      platformAccessory: function (n, u) { return mkAccessory(n, u); },
+      registerPlatformAccessories: (_p, _pl, accs) => registered.push(...accs),
+    };
+    const platform = {
+      accessories: [], activeUUIDs: new Set(), PLUGIN_NAME: 'p', PLATFORM_NAME: 'P',
+      registerShutdown: () => {},
+    };
+    return { api, platform, registered, mkAccessory, Service, C };
+  }
+
+  const mkComp = (machine, remainMin) => ({
+    washerOperatingState: {
+      machineState: { value: machine },
+      // 'pause'인데 jobState를 'none'으로 주면 분류기가 FINISHED로 먼저 판정한다(실수 방지).
+      washerJobState: { value: (machine === 'run' || machine === 'pause') ? 'wash' : 'none' },
+      remainingTime: { value: remainMin },
+    },
+  });
+
+  async function runLaundry(configDevice, statusComponents) {
+    const h = mkHarness();
+    const acc = h.mkAccessory('세탁기', 'uuid:main');
+    acc.context.device = { deviceId: 'W1', label: '세탁기' };
+    h.platform.accessories.push(acc);
+    const logs = [];
+    const l = new Laundry({
+      log: { info: (m) => logs.push(m), warn: (m) => logs.push(m), error: (m) => logs.push(m), debug: () => {} },
+      api: h.api, platform: h.platform, deviceKind: 'washer',
+      smartthings: { invalidateStatusCache() {}, getStatus: async () => statusComponents },
+    });
+    l.configure(acc, configDevice, '9.9.9');
+    await new Promise(r => setTimeout(r, 30));   // 첫 poll 완료 대기
+    return { l, h, acc, logs };
+  }
+
+  await t('분리 OFF(기본) — 유닛 1개, 둘 중 하나만 돌아도 가동 중', async () => {
+    const { l } = await runLaundry(
+      { enableNotificationSensor: false },
+      { main: mkComp('stop', 0), sub: mkComp('run', 40) });
+    assert.strictEqual(l.units.length, 1, '합침인데 유닛이 ' + l.units.length + '개');
+    assert.strictEqual(l.units[0].key, 'combined');
+    assert.strictEqual(l.units[0].state.active, true, 'sub가 도는데 가동 중이 아니다');
+    assert.strictEqual(l.units[0].state.duration, 40 * 60, '잔여시간이 두 조의 최대값이 아니다');
+  });
+
+  await t('분리 ON — 유닛 2개, 각 조가 자기 상태만 본다', async () => {
+    const { l, h } = await runLaundry(
+      { enableNotificationSensor: false, splitCompartments: true },
+      { main: mkComp('stop', 0), sub: mkComp('run', 40) });
+    assert.strictEqual(l.units.length, 2, '분리인데 유닛이 ' + l.units.length + '개');
+    const [m, sub] = l.units;
+    assert.strictEqual(m.key, 'main');
+    assert.strictEqual(sub.key, 'sub');
+    assert.strictEqual(m.state.active, false, '메인은 멈춰 있어야 한다');
+    assert.strictEqual(sub.state.active, true, '보조는 돌아야 한다');
+    assert.strictEqual(sub.state.duration, 40 * 60);
+    // 보조는 새 액세서리로 등록되고 activeUUIDs에 들어가야(정리 대상에서 제외) 한다
+    assert.ok(h.registered.some(a => a.UUID === 'uuid:W1:compartment:sub'), '보조 액세서리 미등록');
+    assert.ok(h.platform.activeUUIDs.has('uuid:W1:compartment:sub'), 'activeUUIDs 누락 — 재시작 시 지워진다');
+  });
+
+  await t('분리 ON — 이름을 지정하면 그 이름을 쓴다', async () => {
+    const { l, acc } = await runLaundry(
+      { enableNotificationSensor: false, splitCompartments: true,
+        mainCompartmentName: '애드워시', subCompartmentName: '콤팩트워시' },
+      { main: mkComp('run', 10), sub: mkComp('stop', 0) });
+    assert.strictEqual(l.units[0].label, '애드워시');
+    assert.strictEqual(l.units[1].label, '콤팩트워시');
+    assert.strictEqual(acc.displayName, '애드워시', '메인 액세서리 이름이 안 바뀌었다');
+  });
+
+  await t('분리 ON — 종료 알림 센서가 조마다 따로 생긴다 (UUID 충돌 없음)', async () => {
+    const { h } = await runLaundry(
+      { enableNotificationSensor: true, splitCompartments: true },
+      { main: mkComp('run', 10), sub: mkComp('run', 20) });
+    const ids = h.registered.map(a => a.UUID);
+    assert.ok(ids.includes('uuid:W1:notif:onCompletion:motion'), '메인 센서 없음');
+    assert.ok(ids.includes('uuid:W1:notif:onCompletion:motion:sub'), '보조 센서 없음');
+    assert.strictEqual(new Set(ids).size, ids.length, '액세서리 UUID가 중복됐다');
+  });
+
+  await t('분리 ON인데 보조 구획이 없으면 경고한다 (2-in-1 아님)', async () => {
+    const { logs } = await runLaundry(
+      { enableNotificationSensor: false, splitCompartments: true },
+      { main: mkComp('run', 10) });
+    assert.ok(logs.some(m => /보조 구획이 응답에 없습니다/.test(m)),
+      '경고가 없다: ' + JSON.stringify(logs));
+  });
+
+  await t('설정 UI에 분리 옵션이 노출된다 (layout 등록 확인)', () => {
+    const sc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const P2 = sc.schema.properties.devices.items.properties;
+    for (const k of ['splitCompartments', 'mainCompartmentName', 'subCompartmentName']) {
+      assert.ok(P2[k], 'schema에 ' + k + ' 없음');
+    }
+    assert.strictEqual(P2.splitCompartments.default, false, '기본값은 합침이어야 한다');
+    const flat = JSON.stringify(sc.layout);
+    for (const k of ['splitCompartments', 'mainCompartmentName', 'subCompartmentName']) {
+      assert.ok(flat.includes('devices[].' + k), k + '가 layout에 없다 — UI에 안 그려진다');
+    }
+  });
+
+  // ===== 적대 감사 지적 구멍 보강 =====
+  // runLaundry는 첫 폴만 돌린다. 상태를 바꿔 가며 여러 폴을 재현하려면 직접 제어가 필요하다.
+  async function runSeq(configDevice, sequence) {
+    const h = mkHarness();
+    const acc = h.mkAccessory('세탁기', 'uuid:main');
+    acc.context.device = { deviceId: 'W1', label: '세탁기' };
+    h.platform.accessories.push(acc);
+    const logs = [];
+    let idx = 0;
+    const l = new Laundry({
+      log: { info: (m) => logs.push(m), warn: (m) => logs.push(m), error: (m) => logs.push(m), debug: () => {} },
+      api: h.api, platform: h.platform, deviceKind: 'washer',
+      smartthings: {
+        invalidateStatusCache() {},
+        getStatus: async () => sequence[Math.min(idx, sequence.length - 1)],
+      },
+    });
+    // 폴 간격을 최소로 낮춰 시퀀스를 빠르게 진행시킨다.
+    l.configure(acc, { ...configDevice, sensorPollInterval: 5 }, '9.9.9');
+    // 폴 간격 하한이 5초라 그보다 길게 기다려야 다음 폴이 돈다.
+    const step = async () => { idx++; await new Promise(r => setTimeout(r, 5300)); };
+    await new Promise(r => setTimeout(r, 40));
+    return { l, h, acc, logs, step };
+  }
+
+  await t('★종료 펄스가 RUNNING→FINISHED에서 정확히 1회만 발사된다', async () => {
+    const { l, h, step } = await runSeq(
+      { enableNotificationSensor: true },
+      [{ main: mkComp('run', 30), sub: mkComp('stop', 0) },
+        { main: mkComp('stop', 0), sub: mkComp('stop', 0) },
+        { main: mkComp('stop', 0), sub: mkComp('stop', 0) }]);
+    const sensorAcc = h.registered.find(a => a.UUID === 'uuid:W1:notif:onCompletion:motion');
+    assert.ok(sensorAcc, '센서 액세서리가 없다');
+    let fired = 0;
+    const svc = sensorAcc._s.get('MotionSensor');
+    const orig = svc.updateCharacteristic.bind(svc);
+    svc.updateCharacteristic = (k, v) => { if (k === 'MotionDetected' && v === true) fired++; return orig(k, v); };
+    await step();               // RUNNING → FINISHED
+    assert.strictEqual(fired, 1, '전환 시 펄스가 ' + fired + '회');
+    await step();               // FINISHED 유지
+    assert.strictEqual(fired, 1, 'FINISHED 유지 중에 또 발사됐다: ' + fired);
+    assert.strictEqual(l.units[0].state.active, false);
+  });
+
+  await t('★분리 모드에서 한쪽만 끝나면 그 조의 센서만 발사된다 (교차 오발사 없음)', async () => {
+    const { h, step } = await runSeq(
+      { enableNotificationSensor: true, splitCompartments: true },
+      [{ main: mkComp('run', 30), sub: mkComp('run', 20) },
+        { main: mkComp('stop', 0), sub: mkComp('run', 20) }]);
+    const count = {};
+    for (const key of ['uuid:W1:notif:onCompletion:motion', 'uuid:W1:notif:onCompletion:motion:sub']) {
+      const a = h.registered.find(x => x.UUID === key);
+      const svc = a._s.get('MotionSensor');
+      const orig = svc.updateCharacteristic.bind(svc);
+      count[key] = 0;
+      svc.updateCharacteristic = (k, v) => { if (k === 'MotionDetected' && v === true) count[key]++; return orig(k, v); };
+    }
+    await step();               // 메인만 종료
+    assert.strictEqual(count['uuid:W1:notif:onCompletion:motion'], 1, '메인 센서가 안 울렸다');
+    assert.strictEqual(count['uuid:W1:notif:onCompletion:motion:sub'], 0, '보조 센서가 잘못 울렸다');
+  });
+
+  await t('★합침 모드는 보조 액세서리 UUID를 activeUUIDs에 넣지 않는다 (분리 해제 시 정리됨)', async () => {
+    const { h } = await runLaundry(
+      { enableNotificationSensor: true },
+      { main: mkComp('stop', 0), sub: mkComp('stop', 0) });
+    assert.ok(!h.platform.activeUUIDs.has('uuid:W1:compartment:sub'),
+      '합침인데 보조 밸브 UUID가 살아 있다 — 분리를 꺼도 안 지워진다');
+    assert.ok(!h.platform.activeUUIDs.has('uuid:W1:notif:onCompletion:motion:sub'),
+      '합침인데 보조 센서 UUID가 살아 있다');
+    // 메인/합침 센서 UUID는 유지되어야 재페어링이 없다
+    assert.ok(h.platform.activeUUIDs.has('uuid:W1:notif:onCompletion:motion'), '메인 센서 UUID가 빠졌다');
+  });
+
+  await t('★HomeKit이 실제로 읽는 getter가 유닛별로 올바른 값을 준다 (클로저 교차 없음)', async () => {
+    const { l, acc, h } = await runLaundry(
+      { enableNotificationSensor: false, splitCompartments: true },
+      { main: mkComp('stop', 0), sub: mkComp('run', 25) });
+    const read = (a) => new Promise((res, rej) => {
+      const ch = a._s.get('Valve').getCharacteristic('Active');
+      ch.listeners.get[0]((err, v) => err ? rej(err) : res(v));
+    });
+    const subAcc = h.registered.find(x => x.UUID === 'uuid:W1:compartment:sub');
+    assert.strictEqual(await read(acc), 0, '메인 getter가 ACTIVE를 반환했다(멈춰 있는데)');
+    assert.strictEqual(await read(subAcc), 1, '보조 getter가 INACTIVE를 반환했다(도는 중인데)');
+    assert.strictEqual(l.units[0].state.state !== l.units[1].state.state, true, '두 유닛 상태가 같다');
+  });
+
+  await t('★분리 모드는 hca.main을 보조로 오인하지 않는다 (감사 H-1)', async () => {
+    const { l, logs } = await runLaundry(
+      { enableNotificationSensor: false, splitCompartments: true },
+      { main: mkComp('run', 10), 'hca.main': mkComp('run', 10) });   // sub 없음, hca.main만
+    assert.ok(logs.some(m => /보조 구획이 응답에 없습니다/.test(m)),
+      'hca.main을 sub로 오인해 경고가 억제됐다');
+    assert.notStrictEqual(l.units[1].state.active, true, 'hca.main을 보조 세탁조로 읽었다');
+  });
+
+  await t('합침 모드는 hca.main을 보조로 계속 인정한다 (하위 호환)', async () => {
+    const { l } = await runLaundry(
+      { enableNotificationSensor: false },
+      { main: mkComp('stop', 0), 'hca.main': mkComp('run', 15) });
+    assert.strictEqual(l.units[0].state.active, true, 'hca.main 폴백이 깨졌다');
+  });
+
+  await t('★일시정지 상태로 시작해도 잔여시간이 0으로 고착되지 않는다 (감사 M-2)', async () => {
+    const { l } = await runLaundry(
+      { enableNotificationSensor: false },
+      { main: mkComp('pause', 18), sub: mkComp('stop', 0) });
+    assert.strictEqual(l.units[0].state.state, 'PAUSED', '상태가 PAUSED가 아니다: ' + l.units[0].state.state);
+    assert.strictEqual(l.units[0].state.duration, 18 * 60, '잔여시간이 시드되지 않았다: ' + l.units[0].state.duration);
+  });
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();
