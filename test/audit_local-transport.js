@@ -1178,6 +1178,21 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
       '토큰만 보고 전송을 가르면 오설정 기기가 통째로 죽는다');
   });
 
+  await t('★클라우드 keepalive가 걸려 있다 (로컬 전환 후 폴백 토큰 부패 방지)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    assert.ok(/_startCloudKeepalive\(\)/.test(src), 'keepalive 호출/정의가 없다');
+    const at = src.indexOf('_startCloudKeepalive() {');
+    assert.ok(at > 0, 'keepalive 메서드 정의가 없다');
+    const seg = src.slice(at, at + 2000);
+    assert.ok(/refreshToken\(\)/.test(seg), '토큰 갱신을 호출하지 않는다 — 호출이 없으면 401도 없고 갱신도 없다');
+    assert.ok(/24 \* 60 \* 60 \* 1000/.test(seg), '하루 주기가 아니다');
+    assert.ok(/usesLocal/.test(seg), '로컬 사용 여부를 보지 않는다(클라우드 상시 구성엔 불필요)');
+    assert.ok(!/unlink|_triggerReauth/.test(seg),
+      '갱신 실패에 토큰을 파기한다 — 일시 장애로 전 기기 폴백이 죽는다');
+    assert.ok(/registerShutdown/.test(seg), 'shutdown에서 타이머를 정리하지 않는다');
+  });
+
+
   console.log(`\n총 ${passed + failed}건 / 실패 ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 })();

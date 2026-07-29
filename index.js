@@ -202,6 +202,8 @@ class SmartThingsKM81Platform {
     } else {
       this.log.warn('SmartThings 장치 검색이 실패하거나 비어 있어, 오래된 액세서리 정리를 건너뜁니다. (자동화 보호)');
     }
+
+    this._startCloudKeepalive();
   }
 
   // v2.3.0 — config에 deviceId가 있으면 클라우드 조회를 건너뛰고 바로 바인딩한다.
@@ -394,6 +396,44 @@ class SmartThingsKM81Platform {
     }
   }
 
+  // ★클라우드 토큰 keepalive (v2.4.2)
+  //
+  // 왜 필요한가: 전 기기를 로컬로 옮기면 평상시 SmartThings API 호출이 **0회**가 된다.
+  // 그런데 이 플러그인의 토큰 갱신은 "401을 받으면 갱신"하는 **반응형**이다(SmartThingsClient의
+  // 인터셉터). 호출이 없으면 401도 없고, 갱신도 없다. 그 사이 refresh 토큰은 수명을 다하고,
+  // **로컬이 처음 실패해 폴백이 정말 필요해지는 순간** 재인증을 요구받는다 — 안전망이
+  // 필요할 때 없는 최악의 형태다.
+  // 그래서 하루 한 번 능동적으로 갱신한다. 갱신 때마다 refresh 토큰이 회전하므로 만료되지 않는다.
+  //
+  // 로컬 기기가 하나도 없으면(=클라우드를 상시 쓰는 구성) 불필요하므로 걸지 않는다.
+  _startCloudKeepalive() {
+    if (!this.smartthings) return;
+    const usesLocal = this.devices.some(d => d && d.transport === 'local');
+    if (!usesLocal) return;
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const FIRST_DELAY_MS = 30 * 60 * 1000;   // 부팅 직후 혼잡을 피해 30분 뒤 첫 실행
+
+    const run = async () => {
+      try {
+        await this.smartthings.refreshToken();
+        this.log.info('클라우드 토큰 갱신됨 (폴백 유지용, 하루 1회)');
+      } catch (e) {
+        // ⚠️여기서 토큰 파일을 지우지 않는다 — 일시 장애로 유효한 토큰을 전소시키면
+        //   전 기기의 폴백이 죽는다(v1.8.26에서 같은 이유로 파기 조건을 좁혔다).
+        if (e && e._fatalAuth) {
+          this.log.error(`클라우드 재인증이 필요합니다 — 로컬은 계속 동작하지만 폴백은 쓸 수 없습니다: ${e.message}`);
+        } else {
+          this.log.warn(`클라우드 토큰 갱신 실패 — 다음 주기에 다시 시도합니다: ${e.message}`);
+        }
+      }
+    };
+
+    let interval = null;
+    const first = setTimeout(() => { interval = setInterval(run, DAY_MS); run(); }, FIRST_DELAY_MS);
+    this.registerShutdown(() => { clearTimeout(first); if (interval) clearInterval(interval); });
+    this.log.info('클라우드 토큰 keepalive 활성 (하루 1회) — 로컬 실패 시 폴백을 쓸 수 있게 유지합니다.');
+  }
   // transport 설정에 따라 이 기기가 쓸 클라이언트를 고른다.
   // 로컬을 요청했는데 브릿지가 못 떴거나 host/port가 없으면 조용히 클라우드로 내린다.
   _clientFor(configDevice, deviceId) {

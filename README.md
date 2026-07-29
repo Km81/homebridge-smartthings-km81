@@ -1,408 +1,261 @@
 # homebridge-smartthings-km81
 
-삼성 가전 3종 — **구형 에어컨**(로컬 TLS), **신형 에어컨**·**세탁기/건조기**(SmartThings 클라우드) — 을 하나의 Homebridge 플랫폼으로 통합하는 플러그인입니다.
+삼성 에어컨·세탁기·건조기를 **HomeKit**에 연결하는 Homebridge 플러그인입니다.
 
-기존에 나뉘어 있던 세 플러그인을 대체합니다.
-
-| 대체 대상 | 역할 |
-| --- | --- |
-| `homebridge-samsung-ac` | 구형 에어컨 (TLSv1 직접 통신) |
-| `homebridge-smartthings-ac-km81` | 신형 에어컨 (SmartThings API) |
-| `homebridge-smartthings-washer` | 세탁기 / 건조기 (SmartThings API) |
+가장 큰 특징은 **로컬 제어**입니다. 대부분의 기기를 SmartThings 클라우드를 거치지 않고 집 안 네트워크에서 직접 제어합니다. 인터넷이 끊겨도 동작하고, 반응이 빠르며, 클라우드 API 사용량에 영향을 받지 않습니다.
 
 ---
 
-## 목차
+## 지원 기기
 
-1. [특징](#특징)
-2. [설치](#설치)
-3. [기기 종류](#기기-종류)
-4. [빠른 시작](#빠른-시작)
-5. [신형 에어컨·세탁기·건조기 — SmartThings OAuth 설정](#신형-에어컨세탁기건조기--smartthings-oauth-설정)
-6. [구형 에어컨 — 설정](#구형-에어컨--설정)
-7. [세탁기 / 건조기 종료 알림](#세탁기--건조기-종료-알림)
-8. [전체 설정 예시](#전체-설정-예시)
-9. [동작·안정성 참고](#동작안정성-참고)
-10. [기존 플러그인에서 이전](#기존-플러그인에서-이전)
-11. [보안 주의](#보안-주의)
+| 기기 | 통신 방식 | 클라우드 |
+|---|---|---|
+| 삼성 에어컨 (2016~2018년경, 2in1 포함) | 로컬 TCP 8888 | 불필요 |
+| 삼성 에어컨 (2023년 이후) | 로컬 CoAP over DTLS | 선택 |
+| 삼성 건조기 | 로컬 CoAP over DTLS 또는 클라우드 | 선택 |
+| 삼성 세탁기 (2-in-1 포함) | 로컬 TCP 8888 또는 클라우드 | 선택 |
 
----
+HomeKit에는 이렇게 보입니다.
 
-## 특징
-
-- **하나의 플랫폼**에서 구형 에어컨 + 신형 에어컨 + 세탁기 + 건조기를 함께 관리
-- SmartThings 기기는 **OAuth 토큰 하나**(`smartthings_km81_token.json`)를 공유 — 자동 갱신
-- 구형 에어컨은 로컬 TLSv1(`SECLEVEL=0`) 직접 통신 — 클라우드 없이 동작, Homebridge 2.0 호환
-- 구형 에어컨의 HomeKit '냉방' 버튼이 보낼 실제 모드(냉방/제습/청정 등)를 드롭다운으로 선택, 무풍·자동건조를 스윙·잠금 토글에 매핑
-- 세탁기/건조기 종료 시 iOS 푸시 **1회**를 보내는 모션 센서(선택)
-- 구형 에어컨의 느린 펌웨어를 위한 전원 안정화·명령 직렬화·상태 파일 브릿지 내장
+- **에어컨** — 냉난방기 (전원·온도·모드·무풍·잠금)
+- **세탁기·건조기** — 스프링클러 밸브(남은 시간 카운트다운) + 모션 센서(운전 종료 알림)
 
 ---
 
 ## 설치
 
-```shell
+Homebridge UI의 플러그인 검색에서 `homebridge-smartthings-km81`을 설치하거나:
+
+```bash
 npm install -g homebridge-smartthings-km81
 ```
 
-또는 Homebridge UI의 플러그인 탭에서 `homebridge-smartthings-km81`을 검색해 설치합니다. 설정은 UI의 설정 화면에서 하는 것을 권장합니다(아래 예시는 `config.json`을 직접 편집하는 경우의 참고용).
+설치 후 Homebridge UI의 플러그인 설정 화면에서 기기를 추가합니다. 모든 항목에 한국어 설명이 붙어 있습니다.
 
 ---
 
-## 기기 종류
+## 기기별 설정
 
-`devices` 배열의 각 항목에 `deviceType`을 지정합니다. UI는 선택한 타입에 필요한 필드만 표시합니다.
+### 구형 에어컨 (2016~2018년경)
 
-| `deviceType` | 대상 | 통신 방식 |
-| --- | --- | --- |
-| `legacyAc` | 구형 삼성 에어컨 | 로컬 TLSv1 (포트 8888) |
-| `smartAc` | 신형 삼성 에어컨 | SmartThings 클라우드 |
-| `washer` | 세탁기 | SmartThings 클라우드 |
-| `dryer` | 건조기 | SmartThings 클라우드 |
+`장치 종류`를 **구형 에어컨**으로 고르고 아래를 채웁니다.
 
-> `smartAc` · `washer` · `dryer` 중 하나라도 있으면 SmartThings OAuth 설정(`clientId` / `clientSecret` / `redirectUri`)이 필요합니다. 구형 에어컨(`legacyAc`)만 쓴다면 OAuth 설정은 필요 없습니다.
+| 항목 | 값 |
+|---|---|
+| 이름 | HomeKit에 표시할 이름 |
+| 에어컨 IP | 공유기에서 고정 IP로 잡아두세요 |
+| 인증 토큰 | [토큰 추출](#기기-토큰-추출하기) 참고 |
 
----
+2in1(실외기 하나에 실내기 둘)은 **같은 IP로 항목을 두 개** 만들고 `장치 번호`만 다르게 두면 됩니다.
 
-## 빠른 시작
+### 신형 에어컨·건조기 (2023년 이후)
 
-- **구형 에어컨만** 쓸 경우 → [구형 에어컨 설정](#구형-에어컨--설정)으로 바로 이동(OAuth 불필요).
-- **신형 에어컨·세탁기·건조기**가 있으면 → 먼저 [SmartThings OAuth 설정](#신형-에어컨세탁기건조기--smartthings-oauth-설정)을 1회 완료한 뒤, 각 기기를 `devices`에 추가합니다.
+`장치 종류`를 **신형 에어컨** 또는 **건조기**로 고릅니다.
 
----
+- `전송 경로`를 **로컬**로 두고 `기기 IP`만 넣으면 됩니다. 포트는 자동으로 찾습니다.
+- 토큰은 필요 없습니다. 인증서는 플러그인에 들어 있습니다.
+- 로컬이 실패하면 클라우드로 넘어갑니다(끌 수 있습니다).
 
-## 신형 에어컨·세탁기·건조기 — SmartThings OAuth 설정
+### 세탁기
 
-SmartThings는 리다이렉트 주소로 **포트 없는 `https`(443)** 만 허용합니다. 따라서 외부 `https://<도메인>` 요청을 내부 Homebridge(포트 **8999**)로 넘겨주는 **리버스 프록시**가 필요합니다. 이 설정은 최초 1회만 하면 됩니다.
+`장치 종류`를 **세탁기**로 고릅니다.
 
-### 1단계 · 리버스 프록시 (HTTPS 443 → 내부 8999)
+- `전송 경로`를 **로컬**로 두고 `기기 IP`와 `기기 토큰`을 넣습니다. 토큰은 [아래](#기기-토큰-추출하기)에서 얻습니다.
+- 토큰을 비워두면 클라우드로 동작합니다.
+- **2-in-1**(애드워시+콤팩트워시)은 기본적으로 하나로 합쳐 보이고, 둘 중 하나만 돌아도 "가동 중"으로 표시합니다. `세탁조를 따로 표시`를 켜면 각각 별도 액세서리가 됩니다.
 
-| 구분 | 주소 | 비고 |
-| --- | --- | --- |
-| 외부 (SmartThings 등록용) | `https://<도메인>` | 포트 없음(443 고정) |
-| 내부 (플러그인 수신) | `http://<homebridge_ip>:8999` | 포트 8999 고정 |
+### SmartThings 클라우드를 쓸 때
 
-> ⚠️ 리다이렉트 주소에 포트를 붙이면(`https://<도메인>:9001`) SmartThings가 거부합니다. 외부에서 443으로 접속 가능한 `https://<도메인>` 형태여야 합니다.
+로컬로 붙지 않는 기기는 클라우드를 씁니다. 이때만 아래가 필요합니다.
 
-Nginx Proxy Manager · Synology/UGREEN NAS 내장 리버스 프록시 · Caddy 등 무엇이든 됩니다. 예:
+1. [SmartThings 개발자 워크스페이스](https://smartthings.developer.samsung.com/workspace/)에서 **OAuth 통합**을 만듭니다.
+2. 권한은 `r:devices:*`와 `x:devices:*`를 선택합니다.
+3. 발급된 **Client ID / Client Secret**과 직접 정한 **Redirect URI**(예: `http://<홈브릿지IP>:8999/callback`)를 플러그인 설정에 넣습니다.
+4. Homebridge를 재시작하면 로그에 인증 주소가 나옵니다. 브라우저로 열어 한 번 승인하면 끝입니다.
 
-<details>
-<summary><b>Nginx Proxy Manager</b></summary>
-
-1. **Proxy Hosts → Add Proxy Host**
-2. **Details**: Domain `<도메인>` / Scheme `http` / Forward IP `<homebridge_ip>` / Forward Port `8999` / Block Common Exploits ✅
-3. **SSL**: `Request a new SSL Certificate (Let's Encrypt)` / Force SSL ✅ / HTTP/2 ✅ → Save
-</details>
-
-<details>
-<summary><b>Synology NAS</b></summary>
-
-1. 제어판 → 로그인 포털 → 고급 → 리버스 프록시 → **생성**
-2. 소스: `HTTPS` / `<도메인>` / 포트 `443`
-3. 대상: `HTTP` / `<homebridge_ip>` / 포트 `8999`
-</details>
-
-사전 확인: 라우터의 외부 443 → NAS 443 포워딩, DDNS가 현재 공인 IP를 가리킴, SSL 인증서 유효(Let's Encrypt 자동 갱신 권장).
-
-### 2단계 · OAuth-In SmartApp 생성
-
-SmartThings CLI로 앱을 만듭니다.
-
-```bash
-npm install -g @smartthings/cli
-
-# https://account.smartthings.com/tokens 에서 PAT(개인 액세스 토큰)를 발급받아 아래에 넣습니다.
-export SMARTTHINGS_TOKEN="<발급받은_PAT>"
-
-smartthings apps:create
-```
-
-대화형 프롬프트 입력값:
-
-| 항목 | 입력 |
-| --- | --- |
-| What kind of app | `OAuth-In App` |
-| Display Name / Description | 자유(예: `Homebridge SmartThings`) |
-| Icon Image URL / Target URL | (엔터로 건너뜀) |
-| Select Scopes | 스페이스바로 `r:devices:*`, `w:devices:*`, `x:devices:*` 선택 후 엔터 |
-| Redirect URIs | `Add Redirect URI` → **`https://<도메인>`** (1단계 외부 주소, 포트 없이) → `Finish editing` |
-| Choose an action | `Finish and create OAuth-In SmartApp` |
-
-생성 직후 출력되는 **`OAuth Client Id`** 와 **`OAuth Client Secret`** 을 즉시 복사해 둡니다(다시 볼 수 없습니다).
-
-### 3단계 · Homebridge에 입력 후 인증
-
-플랫폼 설정(또는 `config.json`)에 아래를 넣고 Homebridge를 재시작합니다.
-
-- `clientId` — 발급받은 OAuth Client Id
-- `clientSecret` — 발급받은 OAuth Client Secret
-- `redirectUri` — 2단계에서 넣은 값과 **정확히 동일**(`https://<도메인>`)
-
-재시작하면 로그에 인증 URL이 출력됩니다.
-
-1. 로그의 인증 URL을 브라우저로 열기 → SmartThings 로그인 → 위치 선택 → **인증**
-2. `https://<도메인>/?code=...` 로 리다이렉트 → 리버스 프록시가 내부 8999로 전달 → 토큰이 `smartthings_km81_token.json`에 저장
-3. 로그에 토큰 발급 완료 메시지 확인 후 Homebridge를 한 번 더 재시작하면 기기가 추가됩니다.
-
-> SmartThings가 앱 등록 시 보내는 webhook 핸드셰이크(CONFIRMATION)도 같은 8999 포트가 자동 처리합니다.
+> 모든 기기를 로컬로 쓴다면 이 과정은 필요 없습니다.
 
 ---
 
-## 구형 에어컨 — 설정
+## 기기 토큰 추출하기
 
-구형 에어컨은 클라우드가 아니라 **집 안 네트워크에서 기기와 직접(로컬 TLS)** 통신합니다. 이를 위해 에어컨의 **기기 인증 토큰**이 한 번 필요합니다.
+TCP 8888로 통신하는 기기(구형 에어컨, 세탁기)는 **기기가 발급하는 토큰**이 있어야 합니다. 한 번 받으면 계속 쓸 수 있습니다.
 
-### 토큰 추출 (1회)
+### 원리
 
-에어컨은 최초 Wi-Fi 연결 시 삼성 클라우드(`api.smartthings.com`)로 자신의 토큰을 담아 접속합니다. 그 접속을 **내 컴퓨터로 유도**해 토큰을 확인합니다.
+기기에 "토큰을 달라"고 요청하면, 기기가 **당신의 컴퓨터로 되전화를 걸어** 토큰을 건네줍니다. 그래서 두 가지가 필요합니다.
 
-> 준비물: Python 3 + OpenSSL이 있는 컴퓨터(NAS/라즈베리파이/맥 등), 공유기 관리자 접근 권한, 에어컨을 Wi-Fi 설정 모드로 다시 연결할 준비.
+- 되전화를 받을 **수신 대기 프로그램** (포트 8889)
+- 요청할 때 **어디로 걸어야 하는지 알려 주는 것** — `Host` 헤더
 
-**① 임시 서버 스크립트** — 아래를 `fake_server.py`로 저장합니다.
+> ⚠️ 가장 흔한 실패 원인이 이 `Host` 헤더입니다. 빠뜨리면 기기가 자기 자신에게 전화를 걸고, 토큰은 영영 오지 않습니다.
+
+### 준비물
+
+- 기기와 **같은 네트워크**에 있는 컴퓨터 (요청과 수신을 **같은 컴퓨터에서** 해야 합니다)
+- Python 3
+- 플러그인에 들어 있는 인증서 — `node_modules/homebridge-smartthings-km81/cert/cert.pem`
+
+아래 두 스크립트를 그 인증서와 **같은 폴더**에 두고 실행하세요.
+
+### 1단계 — 수신 대기
+
+`listener.py`로 저장하고 실행합니다.
 
 ```python
-#!/usr/bin/env python3
-import ssl, socket, os, threading
+import re, socket, ssl, threading
 
-LISTEN_IP, HTTPS_PORT = '0.0.0.0', 443
-CERT_FILE, KEY_FILE = 'temp_server_cert.pem', 'temp_server_key.pem'
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.minimum_version = ssl.TLSVersion.TLSv1
+ctx.set_ciphers('ALL:@SECLEVEL=0')
+ctx.verify_mode = ssl.CERT_NONE
+ctx.load_cert_chain('cert.pem')
 
-def ensure_cert():
-    if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
-        os.system(f'openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 '
-                  f'-keyout {KEY_FILE} -out {CERT_FILE} -subj "/CN=api.smartthings.com"')
-
-def handle(conn, addr):
-    print(f">>> 연결 수립: {addr}")
+def handle(sock):
+    data = b''
+    sock.settimeout(10)
     try:
-        while True:
-            data = conn.recv(8192)
-            if not data:
+        while b'}' not in data and len(data) < 65536:
+            chunk = sock.recv(4096)
+            if not chunk:
                 break
-            text = data.decode('utf-8', errors='ignore')
-            for line in text.splitlines():
-                if 'authorization' in line.lower():
-                    print("\n**** 토큰 발견 ****")
-                    print("추출된 토큰:", line.split(' ')[-1])
-                    print("이 값을 Homebridge의 구형 에어컨 '토큰' 필드에 입력하세요.\n")
-            conn.sendall(b'HTTP/1.1 200 OK\r\n\r\n')
-    except Exception as e:
-        print("오류:", e)
-    finally:
-        conn.close()
+            data += chunk
+    except Exception:
+        pass
+    m = re.search(r'"DeviceToken"\s*:\s*"([^"]+)"', data.decode('utf-8', 'replace'))
+    if m:
+        print('\n★ 토큰:', m.group(1), '\n')
+    sock.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+    sock.close()
 
-def main():
-    ensure_cert()
-    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((LISTEN_IP, HTTPS_PORT)); s.listen(5)
-        print(f"가짜 클라우드 서버 시작(포트 {HTTPS_PORT}). 에어컨을 Wi-Fi 설정 모드로 연결하세요.")
-        while True:
-            conn, addr = s.accept()
-            tls_conn = ctx.wrap_socket(conn, server_side=True)  # TLS 핸드셰이크
-            threading.Thread(target=handle, args=(tls_conn, addr)).start()
-
-if __name__ == '__main__':
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('0.0.0.0', 8889))      # bind가 먼저 — 실패하면 여기서 즉시 멈춥니다
+srv.listen(5)
+print('대기 중 — 0.0.0.0:8889')
+while True:
+    raw, addr = srv.accept()
+    print('연결 수신:', addr[0])
     try:
-        main()
-    except PermissionError:
-        print("443 포트는 root 권한이 필요합니다: sudo python3 fake_server.py")
-    except KeyboardInterrupt:
-        print("종료")
-    finally:
-        for f in (CERT_FILE, KEY_FILE):
-            if os.path.exists(f):
-                os.remove(f)
+        conn = ctx.wrap_socket(raw, server_side=True)
+    except Exception as e:
+        print('TLS 실패:', e)
+        continue
+    threading.Thread(target=handle, args=(conn,), daemon=True).start()
 ```
-
-**② DNS 유도** — 공유기 관리자에서 정적 DNS(호스트 매핑)를 추가합니다.
-
-- 호스트: `api.smartthings.com`
-- IP: `fake_server.py`를 실행할 컴퓨터의 내부 IP
-
-**③ 추출 실행**
 
 ```bash
-sudo python3 fake_server.py
+python3 listener.py
 ```
 
-에어컨을 **Wi-Fi 설정 모드**로 바꾸고 SmartThings 앱에서 네트워크 연결을 진행하면, 터미널에 `추출된 토큰: ...` 이 출력됩니다. 이 값을 구형 에어컨의 **토큰** 필드에 입력합니다.
+`대기 중` 문구가 떠야 합니다. 안 뜨면 8889를 다른 프로그램이 쓰고 있는 것이니 정리하고 다시 실행하세요.
 
-**④ DNS 원복 (필수)** — 추출이 끝나면 ②에서 추가한 정적 DNS 규칙을 **반드시 삭제**하세요. 남겨두면 인터넷 사용에 문제가 생기고 에어컨이 계속 가짜 서버로 접속합니다.
+### 2단계 — 기기 준비
 
-> 🔒 이 토큰은 집 안 네트워크에서 기기를 제어하는 값입니다. 공개된 곳(코드 저장소·이슈·스크린샷)에 올리지 마세요.
+**에어컨** — 전원을 **끕니다** (콘센트는 그대로).
 
-### HomeKit 모드 매핑
+**세탁기** — 전원을 켜고, 문을 닫고, 패널의 **스마트 컨트롤(원격 제어) 버튼을 짧게** 눌러 램프를 켭니다.
 
-구형 에어컨은 HomeKit에 **'냉방(Cool)' 단일 모드**만 노출하고, 그 버튼이 실제로 보낼 명령을 아래 필드로 정합니다(난방·자동 버튼은 노출하지 않습니다).
+> ⚠️ 3초 이상 길게 누르면 Wi-Fi 페어링(AP) 모드로 들어가 네트워크에서 빠집니다. 그러면 껐다 켜고 다시 하세요.
 
-| 필드 | 설명 | 기본값 |
-| --- | --- | --- |
-| `hkCoolMode` | '냉방' 버튼이 보낼 실제 모드 | `"Cool"` |
-| `legacySwingBinding` | 스윙 토글에 매핑할 기능 | `"comfort"` |
-| `legacyLockBinding` | 잠금 토글에 매핑할 기능 | `"autoClean"` |
+### 3단계 — 토큰 요청
 
-- `hkCoolMode`: `Cool`(냉방) · `CoolClean`(냉방청정) · `Dry`(제습) · `DryClean`(제습청정)
-- `legacySwingBinding`: `comfort`(무풍) · `wind`(상하 바람) · `none`(토글 숨김)
-- `legacyLockBinding`: `autoClean`(자동건조) · `none`(토글 숨김)
+`request.py`로 저장하고, IP 두 개를 자기 환경에 맞게 고쳐 **새 터미널에서** 실행합니다.
 
-### 구형 에어컨 필드
+```python
+import ssl
+from http.client import HTTPSConnection
 
-| 필드 | 설명 | 기본값 |
-| --- | --- | --- |
-| `name` | HomeKit 표시 이름 | — |
-| `ip` | 에어컨의 로컬 IP | — |
-| `token` | 위에서 추출한 기기 토큰 | — |
-| `pollingInterval` | 상태 폴링 주기(초). `0`이면 폴링 끔 | `10` |
-| `timeout` | 요청 타임아웃(ms) | `5000` |
-| `hkCoolMode` / `legacySwingBinding` / `legacyLockBinding` | 위 [모드 매핑](#homekit-모드-매핑) 참조 | — |
-| `legacyOnGuardMs` / `legacyOnGuardStrategy` | 전원 ON 안정화([아래](#구형-에어컨-전원-안정화)) | `2000` / `drop` |
-| `resendModeOnPowerOn` / `resendAutoCleanOnPowerOn` / `powerOnResendStepMs` | 전원 ON 후 모드·자동건조 재적용([아래](#구형-에어컨-전원-안정화)) | `false` / `false` / `2000` |
-| `deviceIndex` / `setDeviceIndex` | 한 본체에 여러 `Devices[N]`가 있는 모델에서 읽기/쓰기 인덱스 | `0` |
-| `certPath` / `keyPath` | 클라이언트 인증서 경로(비우면 내장 `cert/cert.pem` 사용) | 내장 |
-| `stateDumpFile` | 상태를 JSON 파일로 덤프(외부 연동용, [아래](#상태-파일-브릿지-statedumpfile)) | 끔 |
+DEVICE_IP   = '192.168.1.50'    # 기기 IP
+LISTENER_IP = '192.168.1.100'   # 이 스크립트를 실행하는 컴퓨터 IP
 
----
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.check_hostname = False                      # 순서 주의: verify_mode보다 먼저
+ctx.verify_mode = ssl.CERT_NONE
+ctx.minimum_version = ssl.TLSVersion.TLSv1
+ctx.maximum_version = ssl.TLSVersion.TLSv1_2    # TLS 1.3을 보내면 기기가 멈춥니다
+ctx.set_ciphers('DEFAULT@SECLEVEL=0')
+ctx.load_cert_chain('cert.pem')
 
-## 세탁기 / 건조기 종료 알림
-
-세탁·건조가 끝나는 순간 **iOS 푸시 1회**를 받기 위한 가상 **모션 센서**를 별도 액세서리로 노출합니다(HomeKit 자동화 트리거로도 사용 가능).
-
-| 필드 | 타입 | 기본값 | 설명 |
-| --- | --- | --- | --- |
-| `enableNotificationSensor` | boolean | `false` | 종료 알림 모션 센서 활성화 |
-| `sensorName` | string | `"{기기명} 종료알림"` | 모션 센서 표시 이름 |
-| `sensorPollInterval` | integer | `30` (최소 5) | 종료 감지용 폴링 주기(초) |
-
-**동작** — 운전이 `active` → `inactive`로 바뀌는 순간 모션을 감지시키고 약 10초 뒤 자동 해제합니다. iOS는 모션이 `false→true`로 바뀔 때만 알림을 보내므로 **종료 시 정확히 1회**만 도착합니다(접촉/점유 센서는 양방향이라 2회 발송됨).
-
-**설정 방법**
-
-1. 세탁기/건조기에 `enableNotificationSensor: true` (+ 선택 `sensorName`)
-2. Homebridge 재시작 → 모션 센서 액세서리 생성
-3. iOS 홈 앱 → 해당 모션 센서 → **"센서 활동 알림" 켜기**
-4. 운전 종료 시 푸시 도착
-
----
-
-## 전체 설정 예시
-
-> 아래 값은 모두 예시 자리표시자입니다. 실제 토큰·도메인·IP로 바꿔 넣으세요.
-
-```jsonc
-{
-  "platform": "SmartThingsKM81",
-  "name": "SmartThings KM81",
-
-  // SmartThings 기기(smartAc/washer/dryer)가 있을 때만 필요
-  "clientId": "<OAUTH_CLIENT_ID>",
-  "clientSecret": "<OAUTH_CLIENT_SECRET>",
-  "redirectUri": "https://<도메인>",
-
-  "temperatureMin": 18,
-  "temperatureMax": 30,
-
-  "devices": [
-    {
-      "deviceType": "legacyAc",
-      "name": "거실 에어컨",
-      "ip": "<에어컨_IP>",
-      "token": "<에어컨_토큰>",
-      "pollingInterval": 10,
-      "hkCoolMode": "DryClean",
-      "legacySwingBinding": "comfort",
-      "legacyLockBinding": "autoClean",
-      "resendModeOnPowerOn": true,
-      "resendAutoCleanOnPowerOn": true,
-      "powerOnResendStepMs": 4000,
-      "legacyOnGuardMs": 4000
-    },
-    {
-      "deviceType": "smartAc",
-      "deviceLabel": "안방 에어컨",
-      "coolModeCommand": "dry",
-      "swingBinding": "windFree",
-      "lockBinding": "autoClean",
-      "exposeWindFreeSwitch": true,
-      "exposeAutoCleanSwitch": true
-    },
-    {
-      "deviceType": "washer",
-      "deviceLabel": "세탁기",
-      "enableNotificationSensor": true,
-      "sensorName": "세탁기 종료알림"
-    },
-    {
-      "deviceType": "dryer",
-      "deviceLabel": "건조기",
-      "enableNotificationSensor": true,
-      "sensorName": "건조기 종료알림"
-    }
-  ]
-}
+body = '{}'
+conn = HTTPSConnection(DEVICE_IP, 8888, context=ctx, timeout=15)
+conn.putrequest('POST', '/devicetoken/request', skip_host=True, skip_accept_encoding=True)
+conn.putheader('Host', f'{LISTENER_IP}:8889')    # ★되전화 주소. 빠뜨리면 실패합니다
+conn.putheader('Content-Type', 'application/json')
+conn.putheader('DeviceToken', 'xxxxxxxxxxx')     # 그대로 두세요 (자리표시자)
+conn.putheader('Content-Length', str(len(body)))
+conn.endheaders(body.encode())
+r = conn.getresponse()
+print(r.status, r.reason)
 ```
 
----
+```bash
+python3 request.py
+```
 
-## 동작·안정성 참고
+`200 OK`가 나오면 요청이 접수된 것입니다.
 
-구형 에어컨 펌웨어는 오래돼 응답이 느리고 한 번에 하나의 연결만 처리합니다. 아래 동작들은 그 특성에 대응하기 위한 것으로, 대부분 자동으로 작동합니다.
+### 4단계 — 기기를 켭니다
 
-### 구형 에어컨 전원 안정화
+**에어컨** — 전원을 켭니다.
+**세탁기** — 전원을 껐다가 다시 켭니다.
 
-전원을 켠 직후 짧은 시간 안에 여러 명령(모드/온도/스윙)이 몰리면 구형 펌웨어가 일부를 놓칩니다. 이를 두 가지로 다룹니다.
+몇 초 안에 수신 대기 창에 토큰이 찍힙니다.
 
-**① 보호 윈도우** — 전원 ON 직후 다른 명령을 잠시 가로챕니다.
+```
+연결 수신: 192.168.1.50
 
-| 필드 | 기본값 | 의미 |
-| --- | --- | --- |
-| `legacyOnGuardMs` | `2000` | ON 직후 보호 시간(ms). `0`이면 끔 |
-| `legacyOnGuardStrategy` | `"drop"` | `drop` = 보호 중 명령 무시 / `queue` = 보호 종료 후 마지막 값 1회 전송 |
+★ 토큰: aB3dEf7hIj
+```
 
-- 손으로 전원만 켜고 온도·스윙은 따로 조작 → `drop`(기본)이 안전.
-- Siri/자동화로 "켜고 26도" 같은 일괄 동작을 쓴다면 → `queue`.
+이 값을 플러그인 설정의 `인증 토큰`(에어컨) 또는 `기기 토큰`(세탁기)에 넣으면 됩니다.
 
-**② 켠 뒤 설정 재적용(선택)** — 전원 ON 이후 원하는 모드와 자동건조를 순차로 다시 보냅니다. 켤 때마다 항상 원하는 상태(예: 제습청정 + 자동건조)로 시작하게 합니다.
+### 잘 안 될 때
 
-| 필드 | 기본값 | 의미 |
-| --- | --- | --- |
-| `resendModeOnPowerOn` | `false` | 전원 ON 후 `hkCoolMode`를 재전송 |
-| `resendAutoCleanOnPowerOn` | `false` | 이어서 자동건조 ON을 재전송 |
-| `powerOnResendStepMs` | `2000` | 각 단계 사이 간격(ms). 반응이 느린 기기는 `4000` 권장 |
-
-### 끄기 자동화 보호
-
-HomeKit의 "끄기" 자동화/장면은 전원 끄기와 함께 저장된 모드·온도·스윙 값을 같이 보냅니다. 이 뒤따르는 값들이 방금 끈 기기를 되켜지 않도록, 끈 직후 짧은 창 동안 형제 명령을 억제합니다. 끄기 명령이 네트워크 오류로 실패하면 잠시 뒤 1회 다시 시도합니다. (구형·신형 에어컨 모두 적용, 자동 동작)
-
-### 명령 신뢰성
-
-- 같은 기기(구형 에어컨)를 보는 액세서리들이 연결을 공유하고 모든 요청을 순서대로 처리해 동시 접속 충돌을 막습니다.
-- 상태 조회는 짧은 시간 내 결과를 공유해 기기 부하를 줄이고, 명령을 보낸 직후에는 항상 실제 상태를 다시 읽습니다.
-- 일시적 네트워크 오류는 조회를 자동 재시도합니다(제어 명령은 중복 실행을 피하기 위해 안전한 경우에만 재시도).
-
-### 상태 파일 브릿지 (`stateDumpFile`)
-
-구형 에어컨 상태를 JSON 파일로 계속 기록해, 다른 시스템(예: 홈 오토메이션 대시보드)이 기기를 직접 폴링하지 않고 이 파일만 읽게 할 수 있습니다. 경로를 지정하면 켜지고, 비우면 아무 파일도 쓰지 않습니다.
+| 증상 | 원인과 조치 |
+|---|---|
+| `403 … previous request` | 직전 요청이 처리 중입니다. **정상**이니 1분 기다렸다 다시 하세요. |
+| `200 OK`인데 토큰이 안 옴 | `Host` 헤더의 IP가 **수신 대기 중인 컴퓨터**의 것이 맞는지 확인하고, 4단계(전원 껐다 켜기)를 다시 하세요. |
+| 수신 창에 아무 연결도 안 잡힘 | 방화벽이 8889 인바운드를 막는지, 컴퓨터와 기기가 같은 네트워크인지 확인하세요. |
+| 연결 자체가 안 됨 | 기기가 켜져 있는지, IP가 맞는지 확인하세요. 세탁기는 전원을 끄면 네트워크에서 사라집니다. |
+| `curl`로는 실패함 | 최신 `curl`은 TLS 1.0을 거부합니다. 위 Python 스크립트를 쓰세요. |
 
 ---
 
-## 기존 플러그인에서 이전
+## 자주 묻는 것
 
-1. `config.json`에서 기존 3개 플러그인의 platform 블록을 제거합니다.
-2. 본 플러그인(`SmartThingsKM81`) 블록을 추가하고 `devices`에 항목별 `deviceType`을 지정합니다.
-3. 기존 토큰 파일(`smartthings_ac_token.json` 등)은 사용하지 않습니다 — 본 플러그인이 새 OAuth 흐름으로 `smartthings_km81_token.json`을 발급합니다.
-4. Homebridge 재시작 → (SmartThings 기기가 있으면) 인증 URL 접속 → 권한 허용 → 재시작.
+**클라우드 없이 쓸 수 있나요?**
+네. 모든 기기를 로컬로 설정하면 SmartThings API를 전혀 쓰지 않습니다. 다만 로컬이 실패했을 때 기댈 곳도 없어집니다.
 
-구버전에서 넘어올 때, 더 이상 쓰지 않는 옛 필드(예: `hkCoolModes[]` 배열, `sensorTypes`/`triggerMode` 등)는 설정에 남아 있어도 무시됩니다.
+**로컬과 클라우드를 섞어 쓸 수 있나요?**
+네. 기기마다 따로 정합니다. 로컬로 두고 `로컬 실패 시 클라우드 사용`을 켜 두는 조합을 권합니다. 이 경우 플러그인이 하루 한 번 클라우드 토큰을 갱신해, 폴백이 정작 필요한 순간에 만료돼 있지 않도록 유지합니다.
+
+**세탁기를 껐는데 HomeKit에 계속 "동작 중"으로 보입니다.**
+세탁기는 전원을 끄면 네트워크에서 사라집니다. 플러그인은 잠시 기다렸다가 "꺼짐"으로 판단해 정리합니다. 몇 분 걸릴 수 있습니다.
+
+**토큰이 만료되나요?**
+기기를 초기화하지 않는 한 계속 유효합니다.
+
+**기기 IP가 바뀌면?**
+공유기에서 고정 IP(주소 예약)로 잡아두세요. 바뀌면 설정도 고쳐야 합니다.
+
+**세탁기에서 코스나 온도를 바꿀 수 있나요?**
+아니요. 기기가 원격 변경을 받지 않습니다. 상태 조회와 종료 알림만 됩니다.
 
 ---
 
-## 보안 주의
+## 문제가 생기면
 
-- 구형 에어컨의 **기기 토큰**과 SmartThings **Client Id/Secret**은 비밀 값입니다. 저장소·이슈·스크린샷·로그 공유 시 노출되지 않도록 주의하세요.
-- 구형 에어컨 통신은 호환성을 위해 구식 TLSv1을 사용합니다 — 신뢰할 수 있는 홈 네트워크 안에서만 사용하세요.
+Homebridge 로그를 먼저 보세요. 모든 로그에 `[기기 이름]`이 붙어 있어 어느 기기 문제인지 바로 알 수 있습니다.
+
+더 자세한 내용이 필요하면 Homebridge 설정에서 디버그 모드를 켜세요.
+
+---
+
+## 보안 참고
+
+- 기기 토큰은 `config.json`에 평문으로 저장됩니다. 파일 권한을 확인하세요.
+- 로컬 통신은 구형 기기가 요구하는 TLS 1.0을 씁니다. 같은 네트워크 안에서만 오가는 통신입니다.
 
 ---
 
