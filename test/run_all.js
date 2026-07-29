@@ -26,6 +26,9 @@ const SUITES = [
   { file: 'readme_check.js' },
   // v2.5.0 — MQTT 브리지 계약(availability 의미론·setValue 경유 명령·경보 문구 충돌·발행 dedupe)
   { file: 'mqtt_bridge.js' },
+  //   keepalive   — v2.4.2~2.4.5의 새 접합부(타이머·게이트·실패 처리)를 가짜 시계로
+  //                 여러 날 돌리는 행동 검증. 부품(refresh 기계)은 audit_cloud-oauth가 맡는다.
+  { file: 'audit_keepalive.js' },
 
   { file: 'chain_test.js' },
   { file: 'sim_ac_fail.js' },
