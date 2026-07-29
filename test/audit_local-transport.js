@@ -664,6 +664,23 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(/2회 실패 후 정상화/.test(rec[0]), rec[0]);
   });
 
+  await t('★폴백을 껐을 때의 로컬 사망 경고가 사실과 맞는다 (유일한 신호이므로)', async () => {
+    // v2.4.5부터 읽기 실패는 debug로 내려간다. 폴백까지 꺼 두면 이 error 한 줄이
+    // 사용자가 받는 **유일한** 신호다 — 그런데 문구가 늘 "클라우드로 동작 중"이었다.
+    const errs = [];
+    const c = new LocalApplianceClient(
+      { info: () => {}, warn: () => {}, error: (m) => errs.push(String(m)), debug: () => {} },
+      { cloudClient: { getPower: async () => true } });
+    c.registerDevice(DEV, { ...devInfo, fallbackToCloud: false });
+    c._verified.set(DEV, true);
+    c._rpc = async () => { throw new Error('로컬 요청 시간 초과'); };
+    for (let i = 0; i < 12; i++) await c.getPower(DEV).catch(() => {});
+    const dead = errs.filter((m) => /연속 실패했고 클라우드 폴백도 꺼져 있습니다/.test(m));
+    assert.strictEqual(dead.length, 1, '폴백이 꺼진 상태의 경고가 없거나 중복이다: ' + JSON.stringify(errs));
+    assert.ok(!errs.some((m) => /클라우드로 동작 중/.test(m)),
+      '폴백이 꺼져 있는데 "클라우드로 동작 중"이라고 말했다: ' + JSON.stringify(errs));
+  });
+
   await t('복귀 로그는 한 번만 나온다 (연속 성공 시 반복 금지)', async () => {
     const infos = [];
     const c = new LocalApplianceClient(
