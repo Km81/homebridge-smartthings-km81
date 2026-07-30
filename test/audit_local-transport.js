@@ -1012,9 +1012,14 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
 
   await t('★전원이 꺼져 있으면 stop, 켜져 있고 애매하면 on (종료 알림 조기발사 방지)', async () => {
     const comps = await mkLaundryClient(REAL_RESPONSE).getStatus();
-    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'stop', '전원 Off인데 stop이 아니다');
+    // ★2026-07-30 — main/sub가 배열 순서가 아니라 **기능**으로 정해진다.
+    //   이 픽스처의 Devices[1]이 `spinLevel`을 가진 큰 조(애드워시)이므로 그쪽이 main이다.
+    //   (실기기·SmartThings 앱 교차 확인. 초기 가정 "0=애드워시"는 틀렸다.)
+    //   테스트 의도는 그대로다 — Off는 stop, On+Ready는 'on'.
+    assert.strictEqual(comps.sub.washerOperatingState.machineState.value, 'stop',
+      '전원 Off인데 stop이 아니다');
     // 전원 On + state=Ready는 'stop'으로 단정하면 안 된다 — jobState 판정이 살아 있어야 한다
-    assert.strictEqual(comps.sub.washerOperatingState.machineState.value, 'on',
+    assert.strictEqual(comps.main.washerOperatingState.machineState.value, 'on',
       '전원 On인데 stop으로 단정했다 — 안티주름 단계에서 종료 알림이 조기 발사된다');
   });
 
@@ -1149,6 +1154,89 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
   };
   const UNREACH = () => { throw new Error('TLS 소켓 오류: connect EHOSTUNREACH 1.2.3.4:8888'); };
   const OPS = (...ops) => () => ({ Devices: ops.map(o => (o ? { Operation: o } : {})) });
+
+  await t('★403 쿨다운은 클라우드로 폴백하지 않는다 (사이클 종료마다 새던 호출)', async () => {
+    // 2026-07-30 실사이클 실측: 종료 직후 기기가 403을 한 번 낸다(직전 요청 처리 중).
+    // HANDOFF §0-A3에 "403은 정상 쿨다운"이라고 적혀 있었는데 코드는 401과 같이 다뤘다.
+    let cloudCalls = 0;
+    const c = mkSeqClient({
+      first: () => { const e = new Error('기기가 직전 요청을 처리 중입니다 (status 403) — 잠시 후 자동 재시도'); e.cooldown = true; throw e; },
+      cloud: { getStatus: async () => { cloudCalls++; return {}; } }, deviceId: 'W1',
+    });
+    await c.getStatus().then(
+      () => assert.fail('403인데 상태를 지어냈다'),
+      (e) => assert.strictEqual(e._transient, true, '403에 _transient가 없어 액세서리가 오류로 로그한다'));
+    assert.strictEqual(cloudCalls, 0, '★403 쿨다운으로 클라우드를 호출했다 — 세탁할 때마다 1회씩 나간다');
+  });
+
+  await t('★403은 토큰 무효(401)와 다르게 분류된다 (전송 계층)', async () => {
+    const { LegacyACClient } = require('../lib/api/LegacyACClient');
+    const logs = [];
+    const log = { info: m => logs.push(['info', String(m)]), warn: m => logs.push(['warn', String(m)]),
+      error: m => logs.push(['error', String(m)]), debug: () => {} };
+    const mk = (status) => {
+      const t2 = new LegacyACClient('10.77.0.' + status, 'x'.repeat(10), log, { timeout: 10 });
+      t2._rawRequest = async () => {
+        if (status === 401) throw new Error('인증 실패 (status 401): 토큰을 다시 추출해야 할 수 있습니다.');
+        const e = new Error('기기가 직전 요청을 처리 중입니다 (status 403) — 잠시 후 자동 재시도');
+        e.cooldown = true; throw e;
+      };
+      return t2;
+    };
+    await mk(403).getDeviceStatus().catch(() => {});
+    assert.strictEqual(logs.filter(([lv]) => lv !== 'debug').length, 0,
+      '403 쿨다운이 사용자 로그로 샜다: ' + JSON.stringify(logs));
+    logs.length = 0;
+    await mk(401).getDeviceStatus().catch(() => {});
+    assert.ok(logs.some(([lv, m]) => lv === 'error' && /토큰을 다시 추출/.test(m)),
+      '401은 여전히 사람이 볼 error여야 한다 (진짜 조치가 필요하다)');
+  });
+
+  await t('★실기기 실측 페이로드 — 애드워시를 main으로 잡고 낡은 잔여시간을 버린다', async () => {
+    // 2026-07-30 12:14 실기기(WR20M9970KV) 응답 그대로. SmartThings 앱 교차 확인:
+    // 콤팩트워시=대기 중, 애드워시=탈수 중. ★기기는 콤팩트워시를 Devices[0]로 준다 —
+    // 초기 가정(0=애드워시)이 틀렸고, 그래서 위치가 아니라 기능으로 판별하게 바꿨다.
+    const REAL = { Devices: [
+      { Operation: { kidsLock: 'Ready', power: 'Off', progress: 'None', progressPercentage: 1,
+        remainingTime: '00:52:00', state: 'Ready',
+        supportedProgress: ['None', 'Wash', 'Rinse', 'Spin', 'Finish'] },
+      Washer: { rinseCycles: '2', waterTemperature: 'Cold' } },
+      { Operation: { kidsLock: 'Ready', power: 'On', progress: 'Rinse', progressPercentage: 74,
+        remainingTime: '00:12:00', state: 'Run',
+        supportedProgress: ['None', 'Weightsensing', 'Wash', 'Rinse', 'Spin', 'Finish'] },
+      Washer: { dryLevel: 'None', rinseCycles: '3', spinLevel: 'High' } },
+    ] };
+    const c = mkSeqClient({ first: () => REAL });
+    const r = await c.getStatus();
+    assert.strictEqual(r.main.washerOperatingState.machineState.value, 'run',
+      '애드워시(큰 조)가 main으로 오지 않았다 — 분리 표시에서 이름표가 뒤바뀐다');
+    assert.strictEqual(r.main.washerOperatingState.washerJobState.value, 'rinsing',
+      'Rinse 매핑 실패');
+    assert.strictEqual(r.main.washerOperatingState.remainingTime.value, 12, '남은 시간 12분이 아니다');
+    assert.strictEqual(r.sub.washerOperatingState.machineState.value, 'stop', '콤팩트워시가 대기가 아니다');
+    assert.ok(r.sub.washerOperatingState.remainingTime === undefined,
+      '★꺼진 조가 들고 있던 낡은 52분을 그대로 내보냈다 — 홈킷에 52분이 뜬다');
+    assert.strictEqual(c._lastRunning, true);
+  });
+
+  await t('★세탁조 판별이 애매하면 원래 순서를 유지한다 (근거 없이 뒤집지 않기)', async () => {
+    const FLAT = { Devices: [
+      { Operation: { power: 'On', state: 'Run', progress: 'Wash' }, Washer: { rinseCycles: '1' } },
+      { Operation: { power: 'Off', state: 'Ready', progress: 'None' }, Washer: { rinseCycles: '2' } },
+    ] };
+    const c = mkSeqClient({ first: () => FLAT });
+    const r = await c.getStatus();
+    assert.strictEqual(r.main.washerOperatingState.machineState.value, 'run', '순서가 바뀌었다');
+  });
+
+  await t('★기기가 알려준 supportedProgress 전 값이 매핑표에 있다 (실측 6종)', () => {
+    const LegacyLaundry = require('../lib/api/LegacyLaundryClient');
+    const seen = ['None', 'Weightsensing', 'Wash', 'Rinse', 'Spin', 'Finish'];
+    const unmapped = seen.filter(v => v !== 'None'
+      && LegacyLaundry._progressToJobState(v) === null);
+    assert.strictEqual(unmapped.length, 0,
+      '매핑 없는 진행 단계: ' + unmapped.join(', ') + ' — 그 단계에서 상태 표시가 무너진다');
+  });
 
   await t('F-2 안티주름 단계도 "운전 중"으로 세어 순단을 종료로 단정하지 않는다', async () => {
     // machineState는 'on'으로 떨어지지만 jobState가 wrinklePrevent면 실제로는 돌고 있다.
