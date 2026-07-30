@@ -8,6 +8,7 @@
 //    그 외 대기 없음. getStatus 스트릭(10회)은 mock이 즉시 resolve/reject 하므로 실시간 소요 ~0ms.
 //  - lib/ 소스는 읽기 전용. 상수·타이머 상수 패치 없음.
 
+const fs = require('fs');
 const path = require('path');
 const REPO = path.join(__dirname, '..');
 const SmartThingsClient = require(path.join(REPO, 'lib/api/SmartThingsClient.js'));
@@ -269,9 +270,45 @@ async function T8() {
   console.log(`    기본 레벨에서 보이는 것: ${errLine && errLine[1]}`);
 }
 
+
+// T9 — ★로그에 `undefined`가 찍히지 않는다 (2026-07-30 다른 사용자 실사례)
+//   `[아기방 에어컨] undefined GET 오류: HAP Status Error: -70402` — 특성 이름 자리가 undefined였다.
+//   원인: 인자로 넘어오는 `characteristic`은 HAP 특성 **클래스**(C.Active)라 displayName이 없다.
+//   인스턴스(`service.getCharacteristic(...)`의 반환값)에서 읽어야 한다.
+function T9() {
+  console.log('T9. 로그 문구에 undefined이 새지 않는다');
+  const files = ['lib/accessories/SmartAC.js', 'lib/accessories/Laundry.js', 'lib/accessories/LegacyAC.js'];
+  const bad = files.filter(f => /characteristic.displayName/.test(fs.readFileSync(path.join(REPO, f), 'utf8')));
+  check('특성 이름을 클래스에서 읽지 않는다 (항상 undefined가 됨)', bad.length === 0, bad.join(', '));
+}
+
+
+// T10 — ★사용자 로그 문구에 마크다운을 쓰지 않는다 (2026-07-30)
+//   홈브릿지 콘솔은 마크다운을 렌더하지 않아 `**`·백틱이 그대로 보인다.
+//   내가 실제로 경고 문구에 `**`를 넣었고 readme_check가 잡아냈다(문서 대조가 부수 효과로 발견).
+function T10() {
+  const NEWLINE_RE = new RegExp("\r?\n");
+  const BOLD = "*" + "*";
+  console.log('T10. 로그 문구에 마크다운이 섞이지 않는다');
+  const files = ['index.js', 'lib/accessories/SmartAC.js', 'lib/accessories/Laundry.js',
+    'lib/accessories/LegacyAC.js', 'lib/api/LegacyACClient.js', 'lib/api/LegacyLaundryClient.js',
+    'lib/api/LocalApplianceClient.js', 'lib/api/SmartThingsClient.js'];
+  const bad = [];
+  // 로그 호출 줄, 그리고 그 뒤로 이어 붙이는 문자열 조각(+ '...')까지 검사한다.
+  const isLogLine = (l) => /log[.](info|warn|error)[(]/.test(l) || /^[ ]*[+][ ]*['`]/.test(l);
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(REPO, f), 'utf8');
+    src.split(NEWLINE_RE).forEach((line, i) => {
+      if (!isLogLine(line)) return;
+      if (line.indexOf(BOLD) !== -1) bad.push(f + ':' + (i + 1));
+    });
+  }
+  check('로그 문구에 ** 없음 (콘솔은 마크다운을 렌더하지 않는다)', bad.length === 0, bad.join(', '));
+}
+
 (async () => {
   const t0 = Date.now();
-  for (const t of [T1, T2, T3, T4, T5, T6, T7, T8]) { await t(); console.log(''); }
+  for (const t of [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10]) { await t(); console.log(''); }
   console.log(`총 실패 ${failures}건 / 소요 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   process.exit(failures ? 1 : 0);
 })();

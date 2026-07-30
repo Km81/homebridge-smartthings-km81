@@ -175,7 +175,18 @@ class SmartThingsKM81Platform {
             () => rej(new Error(`기동 대기 ${LOCAL_START_BUDGET_MS / 1000}초 초과`)), LOCAL_START_BUDGET_MS)),
         ]);
       } catch (e) {
-        this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
+        // ★폴백이 켜져 있는지에 따라 **결과가 정반대**다 — 문구도 갈라야 한다.
+        //   v2.4.6에서 `LocalApplianceClient`의 같은 결함을 고쳤는데 이 지점에 전파하지 않아,
+        //   실제로 다른 사용자 로그에서 "클라우드로 동작합니다"가 거짓으로 찍혔다
+        //   (폴백을 전부 끈 구성이라 기댈 곳이 없었고, 홈킷은 '응답 없음'이 됐다).
+        const anyFallback = localDevices.some(d => d?.local?.fallbackToCloud !== false);
+        if (anyFallback) {
+          this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
+        } else {
+          this.log.error('로컬 브릿지 기동 실패 + 클라우드 폴백도 꺼져 있음 — '
+            + `이 기기들은 지금 제어되지 않습니다(홈 앱에 '응답 없음'). `
+            + `급하면 설정에서 '로컬 실패 시 클라우드 사용'을 켜세요: ${e.message}`);
+        }
       }
     }
 
