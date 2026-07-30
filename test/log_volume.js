@@ -258,6 +258,23 @@ fullScenario('★전계층 — 세탁조 분리 + 꺼짐 (보조 구획 warn 폭
 
   const fOff = rows[5];
   check(fOff.visible <= 3, `[전계층] 꺼진 세탁기 하루 사용자 로그 ≤3줄 (실측 ${fOff.visible}줄)`);
+  // ★2026-07-30 실측에서 배운 것: "하루 1줄"은 **재시작이 없을 때**의 값이다.
+  //   재시작하면 꺼짐 래치(`_offlineNotified`)가 초기화되므로 새 프로세스가 1줄을 다시 낸다.
+  //   그날 배포로 4번 재시작했더니 총 5줄(사이클 종료 1 + 재시작 4)이 나왔고, 순간
+  //   "억제가 뚫렸나" 하고 놀랐다 — 계약이 이 사실을 안 적어 둬서 생긴 혼란이다.
+  //   재시작 1회당 정확히 1줄인지(2줄이면 억제가 깨진 것) 여기서 고정한다.
+  {
+    const perBoot = [];
+    for (let boot = 0; boot < 3; boot++) {
+      const log = await runStack({
+        configDevice: { enableNotificationSensor: true, sensorPollInterval: 10 },
+        respond: UNREACH, polls: 40,
+      });
+      perBoot.push(log.visible().filter(([, m]) => /전원 꺼짐/.test(m)).length);
+    }
+    check(perBoot.every((n) => n === 1),
+      `[전계층] 재시작 1회당 '전원 꺼짐' 정확히 1줄 (부팅 3회 실측 ${perBoot.join(',')})`);
+  }
   check(alarmsIn(fOff).length === 0, `[전계층] 꺼진 세탁기에서 hb-watch 경보 문구 0건 (실측 ${alarmsIn(fOff).length}건)`);
 
   const fBrief = rows[6];
