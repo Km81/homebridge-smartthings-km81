@@ -477,7 +477,7 @@
                   "title": "[SmartThings] 로컬 실패 시 클라우드 사용",
                   "type": "boolean",
                   "default": true,
-                  "description": "로컬이 실패하면 클라우드로 대신 처리합니다. 끄면 SmartThings API를 한 번도 쓰지 않지만, 로컬이 실패하면 그 기기는 제어되지 않습니다(홈 앱에 '응답 없음'). 안정적으로 동작하는 것을 확인한 뒤 끄세요."
+                  "description": "로컬이 실패하면 클라우드로 대신 처리합니다. 끄면 SmartThings API를 쓰지 않으며, 로컬이 실패하면 그 기기는 제어되지 않습니다(홈 앱에 '응답 없음')."
                 },
                 "token": {
                   "title": "[세탁기] 기기 토큰",
