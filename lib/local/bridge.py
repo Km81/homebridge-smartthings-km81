@@ -86,6 +86,22 @@ def fetch_gateway_uuid():
     return m.group(1)
 
 
+def env_summary():
+    """진단용 환경 요약 — 인증서 발급이 실패했을 때 로그 한 줄로 원인을 좁히기 위한 것."""
+    import platform
+    bits = ["python %s" % platform.python_version(), platform.machine()]
+    try:
+        import cryptography
+        bits.append("cryptography %s" % cryptography.__version__)
+    except Exception:
+        bits.append("cryptography 없음")
+    try:
+        bits.append(ssl.OPENSSL_VERSION)
+    except Exception:
+        pass
+    return ", ".join(bits)
+
+
 def mint_cert(ca_pem_path, out_chain, out_key):
     """플러그인 동봉 AC14K_M CA로 클라이언트 리프 인증서를 발급한다."""
     from cryptography import x509
@@ -112,7 +128,7 @@ def mint_cert(ca_pem_path, out_chain, out_key):
     ])
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc)
-    leaf = (x509.CertificateBuilder()
+    builder = (x509.CertificateBuilder()
             .subject_name(subject)
             .issuer_name(ca_cert.subject)
             .public_key(key.public_key())
@@ -131,9 +147,33 @@ def mint_cert(ca_pem_path, out_chain, out_key):
                 crl_sign=False, encipher_only=False, decipher_only=False), critical=False)
             .add_extension(x509.ExtendedKeyUsage([
                 x509.ObjectIdentifier("1.3.6.1.5.5.7.3.2"),
-                x509.ObjectIdentifier("1.3.6.1.5.5.7.3.1")]), critical=False)
-            # 기기 신뢰 체계와 맞추기 위해 SHA-1 서명 (2026-07-28 실측으로 수락 확인)
-            .sign(ca_key, hashes.SHA1()))
+                x509.ObjectIdentifier("1.3.6.1.5.5.7.3.1")]), critical=False))
+
+    # 서명 해시 — SHA-1을 먼저 쓰고, 이 환경이 거부하면 SHA-256으로 물러선다.
+    #
+    # ★둘 다 기기가 받는 것을 실측했다(2026-07-30, 건조기 192.168.1.62:49155).
+    #   · SHA-1  : 7/28 발급분으로 이틀간 무사 가동
+    #   · SHA-256: 같은 기기에 DTLS 핸드셰이크 + CoAP GET → 2.05 응답
+    #
+    # SHA-1을 먼저 두는 건 기기 호환이 더 넓다고 믿어서가 아니라, 이미 SHA-1 인증서로
+    # 돌아가고 있는 설치의 조합을 그대로 두기 위해서다(바꿀 이유가 없는 것은 바꾸지 않는다).
+    #
+    # ⚠️최신 배포판에서는 SHA-1 쪽이 기본으로 실패한다. 암호화 라이브러리가 SHA-1 서명을
+    #   막기 때문이다(cryptography 49 + OpenSSL 3.0.13에서 실측:
+    #   Hash algorithm "sha1" not supported for signatures). 폴백이 없던 v2.6.6까지는
+    #   그 환경에서 인증서를 아예 만들지 못해 로컬 제어가 시작조차 못 했다 —
+    #   이미 인증서가 있던 기존 설치에서는 재발급을 안 하므로 드러나지 않던 결함이다.
+    #
+    # 해시 객체 생성 자체가 막히는 구현도 있을 수 있으므로 **호출을 try 안에서** 한다.
+    leaf, sig = None, None
+    for name, make in (("SHA-1", hashes.SHA1), ("SHA-256", hashes.SHA256)):
+        try:
+            leaf, sig = builder.sign(ca_key, make()), name
+            break
+        except Exception as e:                      # UnsupportedAlgorithm 등
+            if name == "SHA-256":
+                raise
+            log("이 환경이 SHA-1 서명을 막아 SHA-256으로 발급합니다 (%s)" % e, "debug")
 
     os.makedirs(os.path.dirname(out_chain), exist_ok=True)
     with open(out_chain, "wb") as f:
@@ -146,7 +186,7 @@ def mint_cert(ca_pem_path, out_chain, out_key):
                                   serialization.NoEncryption()))
     os.chmod(out_key, 0o600)
     os.chmod(out_chain, 0o600)
-    log("클라이언트 인증서 발급됨")
+    log("클라이언트 인증서 발급됨 (%s 서명)" % sig)
 
 
 # ---------- 포트 자동 탐지 ----------
@@ -331,7 +371,10 @@ def main():
         try:
             mint_cert(ca, cert, key)
         except Exception as e:
-            emit({"event": "ready", "ok": False, "error": "인증서 발급 실패: %s" % e})
+            # 인증서 발급 실패는 환경(암호화 라이브러리·OpenSSL 정책)에 좌우된다.
+            # 사용자가 로그 한 장만 보내도 원인을 좁힐 수 있게 버전을 함께 남긴다.
+            emit({"event": "ready", "ok": False,
+                  "error": "인증서 발급 실패: %s [%s]" % (e, env_summary())})
             return
 
     emit({"event": "ready", "ok": True})

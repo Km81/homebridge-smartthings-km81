@@ -24,6 +24,9 @@ const SUITES = [
   { file: 'log_volume.js' },
   { file: 'schema_ui.js' },
   { file: 'readme_check.js' },
+  // v2.6.7 — 인증서 발급은 **첫 설치에서만** 지나가는 경로라 우리 기기로는 절대 안 깨진다.
+  //          최신 배포판에서 발급이 통째로 실패하던 결함이 사용자 로그로만 드러났다.
+  { file: 'bridge_cert.js' },
   // v2.5.0 — MQTT 브리지 계약(availability 의미론·setValue 경유 명령·경보 문구 충돌·발행 dedupe)
   { file: 'mqtt_bridge.js' },
   //   keepalive   — v2.4.2~2.4.5의 새 접합부(타이머·게이트·실패 처리)를 가짜 시계로
@@ -59,8 +62,16 @@ for (const s of SUITES) {
   if (!ok) failed++;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${s.file}  (${dur}s)`);
   if (!ok) {
+    // ★실패한 단언을 먼저 보여준다(v2.6.7). 꼬리 30줄만 찍던 때는 ✗ 줄이 그보다 앞이면
+    // 통과 목록만 남아 "무엇이 깨졌는지"를 다시 실행해야 알 수 있었다.
+    const out = String(r.stdout || '').trim().split('\n');
+    const marks = out.map((l, i) => [l, i]).filter(([l]) => /✗/.test(l));
+    if (marks.length) {
+      console.log('  ────── 실패한 단언 ──────');
+      for (const [, i] of marks) for (const l of out.slice(i, i + 4)) console.log(`  ${l}`);
+    }
     console.log('  ────── 실패 스위트 출력 꼬리 ──────');
-    for (const l of String(r.stdout || '').trim().split('\n').slice(-30)) console.log(`  ${l}`);
+    for (const l of out.slice(-30)) console.log(`  ${l}`);
     for (const l of String(r.stderr || '').trim().split('\n').slice(-10)) console.log(`  ${l}`);
   }
 }

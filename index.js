@@ -16,6 +16,19 @@ const PLATFORM_NAME = 'SmartThingsKM81';
 const PLUGIN_NAME = 'homebridge-smartthings-km81';
 const PACKAGE_ROOT = __dirname;
 
+// 로그에 쓸 기기 이름. deviceLabel이 비어 있어도(deviceId만 적은 구성은 정상 지원된다)
+// `[undefined]`가 찍히지 않도록 폴백을 둔다 — 오늘 `undefined GET 오류`와 같은 부류.
+const labelOf = (d) => (d && (d.deviceLabel || d.name || d.deviceId || d.deviceType)) || '기기';
+
+// ★"클라우드로 동작합니다"는 **폴백이 실제로 가능할 때만** 참이다.
+//   클라우드 자격증명이 없거나 그 기기가 폴백을 껐으면 그 기기는 그냥 제어되지 않는다.
+//   같은 부류를 v2.4.6·v2.6.6에서 두 번 고치고도 이 지점들에 전파하지 않아 세 번째로 고친다.
+function cloudWord(d, smartthings) {
+  const canCloud = !!smartthings && d?.local?.fallbackToCloud !== false;
+  return canCloud
+    ? '클라우드로 동작합니다'
+    : '이 기기는 제어되지 않습니다(클라우드 폴백 없음)';
+}
 const normalizeKorean = s => (s || '').normalize('NFC').trim();
 
 // v2.3.3 — 사용자에게는 '초'로 묻고, 내부 코드에는 기존 ms 키로 넘긴다.
@@ -162,6 +175,9 @@ class SmartThingsKM81Platform {
         cloudClient: this.smartthings,
         pythonBin: this.config.localPythonBin || undefined,
         stateDir: this.config.localStateDir || undefined,
+        // 기본 상태 폴더를 홈브릿지 저장 경로 아래로 잡기 위해 api를 넘긴다(v2.6.7).
+        // 도커가 아닌 설치에서 `/homebridge`에 쓰려다 실패하던 것을 없앤다.
+        api: this.api,
       });
       this.registerShutdown(() => this.localClient.stop());
       // v2.2.1 — 브릿지 기동이 기기 바인딩을 막지 않게 상한을 둔다(감사 HIGH-3).
@@ -179,6 +195,14 @@ class SmartThingsKM81Platform {
         //   v2.4.6에서 `LocalApplianceClient`의 같은 결함을 고쳤는데 이 지점에 전파하지 않아,
         //   실제로 다른 사용자 로그에서 "클라우드로 동작합니다"가 거짓으로 찍혔다
         //   (폴백을 전부 끈 구성이라 기댈 곳이 없었고, 홈킷은 '응답 없음'이 됐다).
+        // ★첫 설치 중이면 이건 '실패'가 아니라 '아직 진행 중'이다(v2.6.7).
+        //   pip 설치는 최대 180초인데 기동 예산은 20초라, **성공하는 첫 설치도** 반드시 이 분기를
+        //   지난다. 예전엔 모든 신규 사용자가 첫 부팅에서 가짜 실패를 보고 재설치·문의를 했다.
+        if (this.localClient.isInstalling && this.localClient.isInstalling()) {
+          this.log.info('로컬 경로 최초 설치가 진행 중입니다 — 몇 분 걸릴 수 있습니다. '
+            + '끝나면 자동으로 로컬 제어로 전환되며, 그때까지는 아직 준비되지 않은 상태입니다.');
+          return;
+        }
         const anyFallback = localDevices.some(d => d?.local?.fallbackToCloud !== false);
         if (anyFallback) {
           this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
@@ -301,10 +325,10 @@ class SmartThingsKM81Platform {
       const cached = this.accessories.find(a =>
         normalizeKorean(a.context?.configDevice?.deviceLabel || '') === target && a.context?.device?.deviceId);
       if (!cached) {
-        this.log.warn(`[${configDevice.deviceLabel}] 클라우드 검색 실패 + 캐시에도 정보가 없어 이번 부팅에는 바인딩하지 못했습니다.`);
+        this.log.warn(`[${labelOf(configDevice)}] 클라우드 검색 실패 + 캐시에도 정보가 없어 이번 부팅에는 바인딩하지 못했습니다.`);
         continue;
       }
-      this.log.warn(`[${configDevice.deviceLabel}] 클라우드 검색 실패 — 캐시 정보로 로컬 경로만 살려 바인딩합니다.`);
+      this.log.warn(`[${labelOf(configDevice)}] 클라우드 검색 실패 — 캐시 정보로 로컬 경로만 살려 바인딩합니다.`);
       this._bindSmartThingsDevice(cached.context.device, configDevice);
       bound += 1;
     }
@@ -553,9 +577,9 @@ class SmartThingsKM81Platform {
       // ★기기 종류 가드 — 토큰만 보고 갈랐더니, 실수로 다른 기기에 토큰이 들어가면
       // 그 기기가 DTLS에도 클라우드에도 등록되지 않아 **통째로 죽었다**(적대 감사 D2).
       if (configDevice.deviceType !== 'washer' && configDevice.deviceType !== 'dryer') {
-        this.log.warn(`[${configDevice.deviceLabel}] 이 기기는 8888 토큰 방식을 쓰지 않습니다 — 토큰을 무시하고 기존 로컬 경로로 진행합니다.`);
+        this.log.warn(`[${labelOf(configDevice)}] 이 기기는 8888 토큰 방식을 쓰지 않습니다 — 토큰을 무시하고 기존 로컬 경로로 진행합니다.`);
       } else if (!cfg.host) {
-        this.log.warn(`[${configDevice.deviceLabel}] 로컬(8888)을 요청했지만 기기 IP가 없어 클라우드로 동작합니다.`);
+        this.log.warn(`[${labelOf(configDevice)}] 로컬(8888)을 요청했지만 기기 IP가 없어 ${cloudWord(configDevice, this.smartthings)}. 설정의 '기기 IP'를 채우세요.`);
         return this.smartthings;
       } else {
         const key = `${cfg.host}:8888`;
@@ -574,9 +598,9 @@ class SmartThingsKM81Platform {
               deviceId,
               fallbackToCloud: cfg.fallbackToCloud !== false,
             }));
-            this.log.info(`[${configDevice.deviceLabel}] 로컬 경로 등록 — ${cfg.host}:8888 (토큰 방식)`);
+            this.log.info(`[${labelOf(configDevice)}] 로컬 경로 등록 — ${cfg.host}:8888 (토큰 방식)`);
           } catch (e) {
-            this.log.error(`[${configDevice.deviceLabel}] 로컬(8888) 준비 실패 — 클라우드로 동작합니다: ${e.message}`);
+            this.log.error(`[${labelOf(configDevice)}] 로컬(8888) 준비 실패 — ${cloudWord(configDevice, this.smartthings)}: ${e.message}`);
             return this.smartthings;
           }
         }
@@ -586,7 +610,7 @@ class SmartThingsKM81Platform {
 
     // port는 선택이다 — 비워두면 브릿지가 49152~49160을 탐지한다.
     if (!this.localClient || !cfg.host) {
-      this.log.warn(`[${configDevice.deviceLabel}] 로컬 전송을 요청했지만 준비되지 않아 클라우드로 동작합니다 (기기 IP 확인).`);
+      this.log.warn(`[${labelOf(configDevice)}] 로컬 전송을 요청했지만 준비되지 않아 ${cloudWord(configDevice, this.smartthings)} (기기 IP 확인).`);
       return this.smartthings;
     }
     this.localClient.registerDevice(deviceId, {

@@ -329,9 +329,28 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     const c = mkClient();
     c.registerDevice(DEV, { ...devInfo, port: 49154, fallbackToCloud: false });
     c._verified.set(DEV, true);
+    c._ready = true;                 // 브릿지는 떠 있고 기기만 응답이 없는 상황
     c._rpc = async () => { throw new Error('무응답'); };
     for (let i = 0; i < 3; i++) await c.getPower(DEV).catch(() => {});
     assert.strictEqual(c.devices.get(DEV).port, undefined, '포트가 무효화되지 않았다');
+  });
+
+  // ★v2.6.7 — 브릿지가 아예 못 뜬 경우(의존성 설치 실패 등)에는 원인이 포트가 아니다.
+  // 실사용자 로그에서 "포트를 다시 탐지합니다"가 찍혀 IP·포트를 의심하게 만들었고,
+  // 재탐지는 브릿지가 없으니 실제로 일어나지도 않았다.
+  await t('브릿지가 못 떴을 땐 포트를 건드리지 않고 설치 오류를 가리킨다', async () => {
+    const lines = [];
+    const c = new LocalApplianceClient(
+      { ...silentLog, warn: (m) => lines.push(m) },
+      {});
+    c.registerDevice(DEV, { ...devInfo, port: 49154, fallbackToCloud: false });
+    c._verified.set(DEV, true);
+    c._ready = false;                // 브릿지 미기동
+    c._rpc = async () => { throw new Error('로컬 브릿지 미준비'); };
+    for (let i = 0; i < 3; i++) await c.getPower(DEV).catch(() => {});
+    assert.strictEqual(c.devices.get(DEV).port, 49154, '엉뚱하게 포트를 버렸다');
+    assert.ok(lines.some((l) => /떠 있지 않아/.test(l)), '설치 오류를 가리키는 안내가 없다');
+    assert.ok(!lines.some((l) => /포트를 다시 탐지/.test(l)), '포트 재탐지로 오인시키는 줄이 남았다');
   });
 
   await t('기기 신원이 다르면 로컬을 끄고 클라우드로 내려간다 (IP 오타 방어)', async () => {
