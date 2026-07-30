@@ -180,6 +180,37 @@ const shownTop = new Set([...everShown].map((k) => k.split('.')[0]));
 const never = Object.keys(DEVPROPS).filter((k) => !shownTop.has(k) && !INTENTIONALLY_HIDDEN[k]);
 check(never.length === 0, `UI로 설정 불가능한 스키마 속성 없음 (실측 ${never.length}${never.length ? ': ' + never.join(', ') : ''})`);
 
+// ⑦-0 ★min·max가 둘 다 있는 숫자 필드는 layout에서 위젯을 명시해야 한다 (2026-07-30 사용자 지적).
+//    homebridge-config-ui-x는 그런 필드를 **슬라이더**로 그린다 — 포트 번호(1883)나 초 단위
+//    주기를 슬라이더로 미세 조정하게 만드는 건 불합리하다. `type:'number'`를 layout에 명시하면
+//    입력칸이 된다. 온도처럼 슬라이더가 자연스러운 필드는 min·max 중 하나를 빼거나 명시적으로
+//    슬라이더로 두면 되지만, 현재는 해당 필드가 없다.
+{
+  const numeric = [];
+  const scanNum = (props, prefix) => {
+    for (const [k, v] of Object.entries(props || {})) {
+      if ((v.type === 'integer' || v.type === 'number')
+          && v.minimum !== undefined && v.maximum !== undefined) numeric.push(prefix + k);
+      if (v.properties) scanNum(v.properties, prefix + k + '.');
+    }
+  };
+  scanNum(SCHEMA.properties, '');
+  scanNum(DEVPROPS, 'devices[].');
+  const widgetTyped = {};
+  (function walkAll(n) {
+    if (Array.isArray(n)) { n.forEach(walkAll); return; }
+    if (!n || typeof n !== 'object') return;
+    if (n.key && n.type) widgetTyped[n.key] = n.type;
+    for (const v of Object.values(n)) if (v && typeof v === 'object') walkAll(v);
+  })(LAYOUT);
+  const sliders = numeric.filter((k) => !widgetTyped[k]);
+  check(sliders.length === 0,
+    `min·max 숫자 필드는 전부 위젯 명시 — 슬라이더 렌더 없음 (위반 ${sliders.length}${sliders.length ? ': ' + sliders.join(', ') : ''})`);
+  // 비밀번호 필드는 화면에서 마스킹돼야 한다 (평문 노출 스크린샷 실사고)
+  check(widgetTyped['mqtt.password'] === 'password',
+    `MQTT 비밀번호는 마스킹 위젯 (실측 ${widgetTyped['mqtt.password'] || '평문 텍스트'})`);
+}
+
 // ⑦ 냉방 모드 선택지는 코드(lib/shared.js)와 **글자 하나까지** 같아야 한다.
 //    어긋나면 사용자가 고른 모드가 말없이 다른 모드로 바뀐다(감사 S-1의 실제 증상).
 const codeList = [...COOL_MODE_COMMANDS].sort().join('|');

@@ -644,7 +644,8 @@
           "key": "mqtt.port",
           "condition": {
             "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
-          }
+          },
+          "type": "number"
         },
         {
           "key": "mqtt.username",
@@ -656,7 +657,8 @@
           "key": "mqtt.password",
           "condition": {
             "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
-          }
+          },
+          "type": "password"
         },
         {
           "key": "mqtt.baseTopic",
@@ -674,7 +676,8 @@
           "key": "mqtt.republishInterval",
           "condition": {
             "functionBody": "return model.mqtt && model.mqtt.enabled === true;"
-          }
+          },
+          "type": "number"
         }
       ]
     },

@@ -82,6 +82,9 @@ const FIELD_MENTIONS = [
   '장치 종류', '전송 경로', '기기 IP', '기기 토큰', '장치 이름',
   '종료 알림 센서 활성화', '세탁조를 따로 표시', '로컬 실패 시 클라우드 사용',
   '장치 인덱스 (읽기)', '장치 인덱스 (쓰기)',
+  // MQTT 절 (2026-07-30 신설 — README가 화면 문구와 다르면 초심자가 그 항목을 못 찾는다)
+  'MQTT 브리지 사용', '브로커 주소', '브로커 포트', '사용자 이름', '비밀번호',
+  '기본 토픽', 'HA 자동 검색 접두어', '재발행 주기(초)',
 ];
 const mentioned = FIELD_MENTIONS.filter((f) => README.includes(f));
 const bogus = mentioned.filter((f) => !bare.has(f) && ![...bare].some((b) => b.startsWith(f)));
