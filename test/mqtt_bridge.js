@@ -184,8 +184,9 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
       'LWT가 브리지 availability 토픽을 가리킴');
     ok(c.opts.will.payload === 'offline' && c.opts.will.retain === true, 'LWT는 offline·retain');
     c.emit('connect');
-    b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });
-    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true });
+    b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });            // 8888: progress/energy 없음
+    b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer', hasProgress: true, hasEnergy: true });
+    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true });
 
     // 모든 검색 payload가 같은 availability_topic 하나만 참조해야 한다.
     const cfgs = c.published.filter(p => /\/config$/.test(p.topic)).map(p => JSON.parse(p.payload));
@@ -205,11 +206,38 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     ok(st.running === 'OFF' && typeof st.status === 'string' && st.status.length > 0,
       '꺼짐이 상태값(running=OFF)으로 표현됨', JSON.stringify(st));
 
-    // ★entity_id 결정성(§7-2): 모든 config에 ASCII object_id가 있어야 HA가 한글을 로마자화하지 않는다
-    ok(cfgs.every(x => typeof x.object_id === 'string' && /^[a-z0-9_]+$/.test(x.object_id)),
-      '전 엔티티가 ASCII object_id 보유(entity_id 결정적)');
-    // ★job(진행 단계) 센서는 만들지 않는다 — jobState를 못 얻어 영구 공백이 되는 죽은 엔티티 방지
+    // ★object_id 미포함(§7-2 실측): HA(2026.7.4)가 payload object_id를 무시하고 device 이름
+    //   기반으로 entity_id를 만든다. 넣어도 효과 없고 HA 업그레이드 시 페이로드 거부 잠복위험 →
+    //   넣지 않는다. entity_id는 로마자 실측값을 문서에 기록해 자동화가 참조.
+    ok(cfgs.every(x => x.object_id === undefined), 'object_id 미포함(로마자 entity_id 확정)');
+    // ★job(진행 단계) 센서는 만들지 않는다(세탁기 8888은 jobState 미지원 — 죽은 엔티티 방지)
     ok(!cfgs.some(x => x.unique_id && x.unique_id.endsWith('_job')), 'job(진행 단계) 센서 미발행');
+
+    // ★§6-3 모니터링 센서 발행 검증(실측 키 기반)
+    const uids = cfgs.map(x => x.unique_id);
+    ok(['power_w', 'energy_kwh', 'humidity', 'filter_percent'].every(k => uids.includes(`km81_seungjun_ac_${k}`)),
+      '승준 에어컨 전력·에너지·습도·필터 센서 발행');
+    ok(uids.includes('km81_seungjun_ac_light'), '승준 조명 스위치 발행(hasLight)');
+    // ★건조기(로컬)는 진행률·에너지 센서, 세탁기(8888)는 없어야 한다
+    ok(uids.includes('km81_dryer2_progress') && uids.includes('km81_dryer2_energy_kwh'),
+      '건조기 진행률·에너지 센서 발행');
+    ok(!uids.includes('km81_washer_progress') && !uids.includes('km81_washer_energy_kwh'),
+      '세탁기(8888)는 진행률·에너지 미발행');
+    // ★energy 센서는 total_increasing(에너지 대시보드 편입)
+    const eng = cfgs.find(x => x.unique_id === 'km81_seungjun_ac_energy_kwh');
+    ok(eng && eng.state_class === 'total_increasing' && eng.device_class === 'energy', '누적전력 센서 클래스 정확');
+
+    // ★제어값+모니터링값이 한 state 토픽에 병합 발행되는가
+    b.publishSmartAcState('seungjun_ac', { power: true, currentTemp: 26, coolingSetpoint: 24, windFree: false, autoClean: true });
+    b.publishSmartAcSensors('seungjun_ac', { power_w: 1200, cumulative_kwh: 114.62, humidity: 65, filter_percent: 3.6, light: true });
+    const merged = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/seungjun_ac/state').pop().payload);
+    ok(merged.mode === 'cool' && merged.power_w === 1200 && merged.humidity === 65 && merged.filter_percent === 3.6 && merged.light === 'ON',
+      '제어값+모니터링값 병합 발행', JSON.stringify(merged));
+
+    // ★건조기 남은시간 raw는 60분 상한이 없다(HomeKit Valve 캡 회피)
+    b.publishLaundryState('dryer2', { state: 'running', remainingMin: 109, progress: 42, cumulative_kwh: 1222.6 });
+    const dm = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/dryer2/state').pop().payload);
+    ok(dm.remaining_min === 109 && dm.progress === 42 && dm.energy_kwh === 1222.6, '건조기 raw 남은시간(109분)·진행률·에너지', JSON.stringify(dm));
     b.stop();
   });
 }
