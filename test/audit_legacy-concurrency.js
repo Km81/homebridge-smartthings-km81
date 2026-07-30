@@ -302,6 +302,32 @@ const F = S('F', '공유 클라이언트 단일커넥션 불변식 — 두 액�
   teardown(living); teardown(bed);
 }
 
+// --- 냉방 버튼에 매핑할 모드 (v2.6.9) ---------------------------------------
+// 실기기 검증 2026-07-31 (거실, 켜져 있는 상태): Wind·Auto 모두 기기에 반영되고
+// Operation.power가 On으로 유지된다 = 홈킷 타일이 냉방(COOLING)을 유지한다.
+// 여기서는 "설정값이 그대로 쓰이는가"만 본다 — 옛 코드는 모르는 값을 말없이 'Cool'로 바꿨다.
+{
+  const G = S('G', '냉방 버튼에 매핑할 모드');
+  const resolve = (hkCoolMode) => {
+    const o = Object.create(LegacyAC.prototype);
+    o.log = recLog(); o.name = '거실'; o.config = { hkCoolMode };
+    return o._resolveCoolMode();
+  };
+  for (const m of require('../lib/shared.js').LEGACY_COOL_MODES) {
+    G.check(`'${m}'가 그대로 쓰인다`, resolve(m) === m, `실측 ${resolve(m)}`);
+  }
+  G.check('모르는 값은 Cool로 대체된다', resolve('SuperTurbo') === 'Cool');
+  G.check('★기기가 지원 안 하는 모드는 한 번 경고한다', (() => {
+    const o = Object.create(LegacyAC.prototype);
+    const log = recLog();
+    o.log = log; o.name = '거실'; o.coolModeStr = 'Wind';
+    o.deviceState = { Mode: { supportedModes: ['Cool', 'Dry'] } };
+    o._warnUnsupportedMode(); o._warnUnsupportedMode();   // 두 번 불러도 한 줄
+    const hits = log.logs.filter((l) => /지원하지 않습니다/.test(l));
+    return hits.length === 1;
+  })());
+}
+
 console.log(`\n총 체크 ${total}개 / 실패 ${fail}개`);
 process.exit(fail === 0 ? 0 : 1);
 })();

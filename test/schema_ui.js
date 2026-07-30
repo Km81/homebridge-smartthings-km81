@@ -219,5 +219,15 @@ const uiList = (allTitleMaps.get('coolModeCommand') || []).map((o) => o.value).s
 check(codeList === schemaList, `냉방 모드: 코드 ↔ 스키마 일치 (코드 ${codeList} / 스키마 ${schemaList})`);
 check(codeList === uiList, `냉방 모드: 코드 ↔ 화면 titleMap 일치 (화면 ${uiList})`);
 
+// ⑧ 구형 에어컨 냉방 모드도 같은 대조를 받는다(v2.6.9 신설).
+//    지금까지 신형만 검사하고 있었는데, 정작 구형 쪽이 코드에 하드코딩돼 있어
+//    스키마와 어긋나도 아무도 몰랐다(실제로 Wind·Auto가 코드에도 화면에도 없었다).
+const legacyCode = [...require('../lib/shared.js').LEGACY_COOL_MODES].sort().join('|');
+const legacySchema = (DEVPROPS.hkCoolMode.oneOf || []).map((o) => o.enum[0]).sort().join('|');
+const legacyUi = (allTitleMaps.get('hkCoolMode') || []).map((o) => o.value).sort().join('|');
+check(legacyCode === legacySchema,
+  `구형 냉방 모드: 코드 ↔ 스키마 일치 (코드 ${legacyCode} / 스키마 ${legacySchema})`);
+check(legacyCode === legacyUi, `구형 냉방 모드: 코드 ↔ 화면 titleMap 일치 (화면 ${legacyUi})`);
+
 console.log(fail.length ? `\n❌ ${fail.length}건 실패` : '\n✅ 전부 통과');
 process.exit(fail.length ? 1 : 0);

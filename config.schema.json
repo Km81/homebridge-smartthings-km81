@@ -177,9 +177,21 @@
                   "enum": [
                     "DryClean"
                   ]
+                },
+                {
+                  "title": "송풍",
+                  "enum": [
+                    "Wind"
+                  ]
+                },
+                {
+                  "title": "자동",
+                  "enum": [
+                    "Auto"
+                  ]
                 }
               ],
-              "description": "HomeKit '냉방'을 눌렀을 때 구형 에어컨으로 보낼 모드."
+              "description": "HomeKit '냉방'을 눌렀을 때 구형 에어컨으로 보낼 모드. 송풍·자동은 냉방을 하지 않으므로 온도 설정이 의미 없을 수 있습니다."
             },
             "legacySwingBinding": {
               "title": "[구형 AC] 스윙(Swing) 토글 ↔ 기능",
@@ -837,6 +849,14 @@
             {
               "value": "DryClean",
               "name": "제습청정"
+            },
+            {
+              "value": "Wind",
+              "name": "송풍"
+            },
+            {
+              "value": "Auto",
+              "name": "자동"
             }
           ],
           "condition": {
