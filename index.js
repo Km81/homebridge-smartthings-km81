@@ -451,7 +451,7 @@ class SmartThingsKM81Platform {
     }
     const slug = this._mqttSlug(configDevice, accessory.context?.device?.deviceId);
     try {
-      const common = { bridge: this.mqtt, api: this.api, log: this.log, accessory, configDevice, slug };
+      const common = { bridge: this.mqtt, api: this.api, log: this.log, accessory, configDevice, slug, platform: this };
       const ok = configDevice.deviceType === 'smartAc'
         ? attachSmartAc({ ...common, logic })
         : attachLaundry({ ...common, kind: configDevice.deviceType });
