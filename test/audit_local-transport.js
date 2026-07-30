@@ -153,6 +153,46 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  // ★v2.6.8 — 설치된 패키지에는 파이썬 버전에 묶인 바이너리가 있다(cryptography 등).
+  // 파이썬이 바뀌면 스탬프는 '설치됨'인데 라이브러리는 못 읽는 상태가 되어, 브릿지가
+  // import 오류로 죽고 원인이 로그 어디에도 남지 않는다.
+  await t('★파이썬이 그대로면 재설치하지 않는다', async () => {
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'km81t-'));
+    const c = mkClient({ libDir: tmp });
+    c._probePython = async () => '3.12';
+    c.pythonBin = 'km81-존재하지-않는-실행파일';       // 설치를 시도하면 반드시 실패한다
+    fs.writeFileSync(path.join(tmp, '.km81-install-ok'),
+      JSON.stringify({ at: '2026-07-31T00:00:00Z', python: '3.12' }));
+    await c._ensureDeps();                            // 조용히 통과해야 한다
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  await t('★파이썬 버전이 바뀌면 다시 설치한다 (옛 바이너리로 죽는 것 방지)', async () => {
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'km81t-'));
+    const lines = [];
+    const c = new LocalApplianceClient({ ...silentLog, info: (m) => lines.push(m) },
+      { libDir: tmp });
+    c._probePython = async () => '3.12';
+    c.pythonBin = 'km81-존재하지-않는-실행파일';
+    fs.writeFileSync(path.join(tmp, '.km81-install-ok'),
+      JSON.stringify({ at: '2026-07-31T00:00:00Z', python: '3.11' }));
+    let tried = false;
+    await c._ensureDeps().catch(() => { tried = true; });
+    assert.ok(tried, '파이썬이 바뀌었는데 재설치를 시도하지 않았다');
+    assert.ok(lines.some((l) => /3\.11.*3\.12/.test(l)), '무엇이 바뀌어 다시 까는지 안 알려준다');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  await t('v2.6.7 이전 스탬프(날짜만)는 그대로 인정한다 (업데이트 시 전원 재설치 방지)', async () => {
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'km81t-'));
+    const c = mkClient({ libDir: tmp });
+    c._probePython = async () => '3.12';
+    c.pythonBin = 'km81-존재하지-않는-실행파일';
+    fs.writeFileSync(path.join(tmp, '.km81-install-ok'), '2026-07-28T04:07:12.000Z');
+    await c._ensureDeps();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
   await t('MEDIUM-1 pip 설치에 타임아웃이 걸려 있다 (소스 불변식)', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'), 'utf8');
     assert.ok(/PIP_TIMEOUT_MS/.test(src) && /p\.kill\(\)/.test(src), 'pip 타임아웃/kill이 사라졌다');
