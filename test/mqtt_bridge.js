@@ -430,6 +430,33 @@ setTimeout(() => {
                 '미접속 warn 문구가 기기 장애 경보 어휘를 피함');
             }
 
+            // ── ⑩ ★세탁물 판정은 홈브릿지 정본과 한 벌이다 (2026-07-30 실사고) ──
+            // v2.6.3까지 attach.js가 판정을 재정의(RUNNING_JOBS)해서, 건조기가 사이클을
+            // 마치고 machineState='run' + jobState='none'을 보고하면 홈킷은 '완료'인데
+            // MQTT만 '운전 중'에 영구 고착됐다(13:58 종료 → 7분+ running=ON 실측).
+            console.log('\n⑩ ★세탁물 판정 = 정본(Laundry.classifyComponent) 위임');
+            {
+              const { laundryStateOf } = require('../lib/mqtt/attach');
+              const mk = (ms, js) => ({ dryerOperatingState: {
+                machineState: { value: ms }, dryerJobState: { value: js } } });
+              // 실사고 조합: 드럼은 멈췄지만 문 열기 전
+              ok(laundryStateOf(mk('run', 'none')) === 'finished',
+                'run+none(사이클 종료 직후) → 완료 — 구 코드는 여기서 영구 운전 중');
+              ok(laundryStateOf(mk('run', 'drying')) === 'running', 'run+drying → 운전 중');
+              // 정본의 POST_CYCLE 구분: idle machineState에서 살아있는 건 안티주름류뿐
+              ok(laundryStateOf(mk('on', 'drying')) === 'finished',
+                'on+drying → 완료(정본 — stale pre-cycle jobState 취급, 홈킷과 일치)');
+              ok(laundryStateOf(mk('on', 'wrinklePrevent')) === 'running',
+                'on+wrinklePrevent(안티주름) → 운전 중');
+              ok(laundryStateOf(mk('pause', 'drying')) === 'paused', 'pause → 일시정지');
+              ok(laundryStateOf(mk('stop', 'none')) === 'finished', 'stop → 완료');
+              ok(laundryStateOf(null) === 'unknown', '컴포넌트 없음 → unknown');
+              // 재정의 금지 계약: attach.js에 판정 집합이 다시 생기면 안 된다
+              const atSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'mqtt', 'attach.js'), 'utf8');
+              ok(!/RUNNING_JOBS/.test(atSrc), 'attach.js에 판정 집합 재정의 없음(정본 단일화)');
+              ok(/classifyComponent/.test(atSrc), 'attach.js가 정본 판정기를 사용');
+            }
+
             // ── 마무리 ──
             console.log(`\n${fail === 0 ? '✅ 전부 통과' : '❌ 실패 ' + fail + '건'} (통과 ${pass})`);
             process.exit(fail === 0 ? 0 : 1);
