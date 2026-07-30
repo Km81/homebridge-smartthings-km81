@@ -90,9 +90,15 @@ class SmartThingsKM81Platform {
     //   deviceId를 직접 적고 transport=local이며 폴백까지 끈 기기는 클라우드를 한 번도 쓰지 않는다.
     //   그런 구성에서도 "필요합니다"를 error로 찍고 있었는데, 사실이 아니었다
     //   (실측: OAuth 항목을 전부 비워도 기기는 로컬 경로에 정상 등록된다).
-    const needsCloud = this.devices.some(d => d
-      && (d.deviceType === 'smartAc' || d.deviceType === 'washer' || d.deviceType === 'dryer')
-      && (!d.deviceId || d.transport !== 'local' || d.local?.fallbackToCloud !== false));
+    //   ★v2.7.0 — deviceId가 없어도 된다: 로컬 기기는 부팅 때 기기에게 직접 물어 알아낸다
+    //   (`_resolveLocalDeviceIds`). 그래서 '기기 IP가 있고 폴백을 끈 로컬 기기'는 클라우드가
+    //   필요 없다. 8888 토큰 기기(세탁기)는 그 조회 경로가 없으므로 deviceId가 있어야 한다.
+    const needsCloud = this.devices.some((d) => {
+      if (!d || !['smartAc', 'washer', 'dryer'].includes(d.deviceType)) return false;
+      if (d.transport !== 'local' || d.local?.fallbackToCloud !== false) return true;
+      if (!d.local?.host) return true;
+      return d.local?.token ? !d.deviceId : false;
+    });
 
     if (hasSmartThingsDevices) {
       const missing = [];
@@ -244,11 +250,16 @@ class SmartThingsKM81Platform {
       hasToken = await this.smartthings.init();
     }
 
+    // ★v2.7.0 — deviceId가 없는 로컬 기기는 **기기에게 직접 물어본다**.
+    //   기기가 oic/d로 자기 di(=SmartThings deviceId)를 알려주므로 클라우드가 필요 없다.
+    //   실패하면 그 기기만 건너뛰고, stale 정리를 억제해 캐시 액세서리를 지키다.
+    const localIdOk = await this._resolveLocalDeviceIds(stDevices);
+
     // v2.3.0 — config에 deviceId가 적힌 기기는 클라우드 조회 없이 바로 붙인다.
-    // 모든 기기에 적어두면 부팅에도 SmartThings API를 한 번도 쓰지 않는다(유료화 대비).
+    // 모든 기기에 적어두면 부팅에도 SmartThings API를 한 번도 쓰지 않는다.
     const needDiscovery = this._bindByConfiguredIds(stDevices);
 
-    let stDiscoverySucceeded = needDiscovery.length === 0;
+    let stDiscoverySucceeded = needDiscovery.length === 0 && localIdOk;
     if (stDevices.length > 0 && this.smartthings) {
       if (!hasToken) {
         this.oauthServer.start(async () => {
@@ -269,6 +280,51 @@ class SmartThingsKM81Platform {
     }
 
     this._startCloudKeepalive();
+  }
+
+  /**
+   * deviceId가 없는 로컬 기기의 deviceId를 기기에게서 직접 얻는다 (v2.7.0).
+   *
+   * 배경: 지금까지 deviceId를 아는 유일한 길이 SmartThings 클라우드 조회였고,
+   * 그 때문에 로컬로만 쓰려는 사람도 OAuth(+https 리버스 프록시)를 반드시 거쳐야 했다.
+   * 그런데 기기는 `oic/d`로 자기 `di`를 알려준다(2026-07-31 실측) — 그걸 쓴다.
+   *
+   * ⚠️액세서리 UUID가 deviceId에서 나오므로(`UUIDGen.generate(device.deviceId)`),
+   *   조회에 실패한 부팅에서 그 기기를 못 붙이면 stale 정리가 캐시 액세서리를 **삭제**한다
+   *   (사용자의 자동화·방 배치·알림 센서가 함께 사라진다). 그래서
+   *   ①한 번 성공하면 디스크에 캐시하고 ②실패하면 false를 돌려 정리를 억제한다.
+   *
+   * @returns {boolean} 모든 대상 기기의 deviceId를 정했으면 true
+   */
+  async _resolveLocalDeviceIds(stDevices) {
+    const need = stDevices.filter(d => d && !d.deviceId
+      && d.transport === 'local' && d.local?.host && !d.local?.token);
+    if (need.length === 0 || !this.localClient) return true;
+
+    let allResolved = true;
+    for (const d of need) {
+      const host = d.local.host;
+      const label = labelOf(d);
+
+      const cached = this.localClient.readDiscovered(host);
+      if (cached?.deviceId) {
+        d.deviceId = cached.deviceId;
+        this.log.debug?.(`[${label}] deviceId를 캐시에서 읽음 (${host})`);
+        continue;
+      }
+
+      try {
+        const found = await this.localClient.probeIdentity(host, d.local.port, d.local.localPort);
+        d.deviceId = found.deviceId;
+        this.localClient.writeDiscovered(host, found);
+        this.log.info(`[${label}] deviceId를 기기에서 확인했습니다 — ${found.name || host}`);
+      } catch (e) {
+        allResolved = false;
+        this.log.warn(`[${label}] ${host}에서 deviceId를 읽지 못해 이번 부팅에서는 건너뜁니다 `
+          + `— 기기 전원과 IP를 확인하세요: ${e.message}`);
+      }
+    }
+    return allResolved;
   }
 
   // v2.3.0 — config에 deviceId가 있으면 클라우드 조회를 건너뛰고 바로 바인딩한다.

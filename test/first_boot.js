@@ -64,6 +64,7 @@ const mkSelf = (overrides = {}) => {
     }],
     smartthings: { init: async () => { seen.init = true; return true; } },
     registerShutdown: () => {},
+    _resolveLocalDeviceIds: async () => true,   // v2.7.0 — 이 시나리오의 관심사가 아니다
     _bindByConfiguredIds: () => { seen.bind = true; return []; },
     _cleanupStaleAccessories: () => { seen.cleanup = true; },
     _startCloudKeepalive: () => { seen.keepalive = true; },
@@ -162,11 +163,89 @@ const mkSelf = (overrides = {}) => {
     assert.ok(L.error.some((l) => /clientId/.test(l)), '클라우드를 쓰는데 요구하지 않았다');
   });
 
-  await t('deviceId가 없으면 여전히 OAuth 항목을 요구한다 (대조군)', () => {
-    const noId = [{ deviceType: 'smartAc', deviceLabel: '신형 에어컨',
-      transport: 'local', local: { host: '10.0.0.9', fallbackToCloud: false } }];
-    const { L } = mkPlatform(noId);
-    assert.ok(L.error.some((l) => /clientId/.test(l)), '이름 검색은 클라우드가 필요한데 요구하지 않았다');
+  // ⚠️v2.7.0에서 뒤집힌 계약: 'deviceId 없음 = 클라우드 필요'는 더 이상 참이 아니다.
+  //   로컬 기기는 부팅 때 기기에게 직접 물어 deviceId를 얻는다. 대조군을 실제로 남는
+  //   조건으로 바꾼다 — 기기 IP가 없으면 물어볼 곳이 없다.
+  await t('기기 IP가 없으면 여전히 OAuth 항목을 요구한다 (대조군)', () => {
+    const noHost = [{ deviceType: 'smartAc', deviceLabel: '신형 에어컨',
+      transport: 'local', local: { fallbackToCloud: false } }];
+    const { L } = mkPlatform(noHost);
+    assert.ok(L.error.some((l) => /clientId/.test(l)), '물어볼 IP가 없는데 요구하지 않았다');
+  });
+
+  await t('전송 경로가 클라우드면 여전히 OAuth 항목을 요구한다 (대조군)', () => {
+    const cloud = [{ deviceType: 'smartAc', deviceLabel: '신형 에어컨', deviceId: 'x' }];
+    const { L } = mkPlatform(cloud);
+    assert.ok(L.error.some((l) => /clientId/.test(l)), '클라우드 전송인데 요구하지 않았다');
+  });
+
+  // ★★v2.7.0 — deviceId 없이 IP만 적어도 기기에게 물어 알아낸다.
+  console.log('\n[deviceId 로컬 자동 확인]');
+
+  const IP_ONLY = () => [{
+    deviceType: 'smartAc', deviceLabel: '신형 에어컨',
+    transport: 'local', local: { host: '10.0.0.9', fallbackToCloud: false },
+  }];
+  const DI = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+  // _resolveLocalDeviceIds만 떼어 검증한다(바인딩은 위 시나리오가 이미 덮는다).
+  const runResolve = async ({ probe, cached }) => {
+    const L = { info: [], warn: [] };
+    const self = {
+      log: { info: (m) => L.info.push(String(m)), warn: (m) => L.warn.push(String(m)),
+        error: () => {}, debug: () => {} },
+      localClient: {
+        readDiscovered: () => cached || null,
+        writeDiscovered: (h, r) => { L.wrote = { h, ...r }; },
+        probeIdentity: probe,
+      },
+    };
+    const devs = IP_ONLY();
+    const ok = await Platform.prototype._resolveLocalDeviceIds.call(self, devs);
+    return { ok, devs, L };
+  };
+
+  await t('★IP만 적어도 기기에게 물어 deviceId를 채운다', async () => {
+    const r = await runResolve({ probe: async () => ({ deviceId: DI, name: 'Samsung Window A/C' }) });
+    assert.strictEqual(r.devs[0].deviceId, DI, 'deviceId가 채워지지 않았다');
+    assert.strictEqual(r.ok, true);
+    assert.ok(r.L.info.some((l) => /기기에서 확인했습니다/.test(l)), '확인 사실을 알리지 않는다');
+  });
+
+  await t('★한 번 알아낸 값은 디스크에 남긴다 (다음 부팅에 기기가 꺼져 있어도 되게)', async () => {
+    const r = await runResolve({ probe: async () => ({ deviceId: DI, name: 'AC' }) });
+    assert.ok(r.L.wrote && r.L.wrote.deviceId === DI, '캐시에 쓰지 않았다');
+    assert.strictEqual(r.L.wrote.h, '10.0.0.9', '캐시 키가 IP가 아니다');
+  });
+
+  await t('캐시가 있으면 기기에 묻지 않는다', async () => {
+    let asked = false;
+    const r = await runResolve({
+      probe: async () => { asked = true; return { deviceId: DI }; },
+      cached: { deviceId: DI, name: 'AC' },
+    });
+    assert.strictEqual(asked, false, '캐시가 있는데 또 물었다');
+    assert.strictEqual(r.devs[0].deviceId, DI);
+  });
+
+  await t('★조회 실패 시 false를 돌려 stale 정리를 막는다 (액세서리 보존)', async () => {
+    const r = await runResolve({ probe: async () => { throw new Error('무응답'); } });
+    assert.strictEqual(r.ok, false, 'true를 돌려주면 캐시 액세서리가 삭제된다');
+    assert.strictEqual(r.devs[0].deviceId, undefined);
+    assert.ok(r.L.warn.some((l) => /deviceId를 읽지 못해/.test(l)), '실패를 알리지 않는다');
+  });
+
+  await t('IP만 적은 완전 로컬 구성도 OAuth 항목을 요구하지 않는다', () => {
+    const { L } = mkPlatform(IP_ONLY());
+    assert.ok(!L.error.some((l) => /clientId/.test(l)),
+      'deviceId는 기기에서 얻는데 OAuth를 요구했다');
+  });
+
+  await t('8888 토큰 기기(세탁기)는 deviceId가 없으면 여전히 요구한다 (조회 경로 없음)', () => {
+    const washer = [{ deviceType: 'washer', deviceLabel: '세탁기', transport: 'local',
+      local: { host: '10.0.0.8', token: 'x', fallbackToCloud: false } }];
+    const { L } = mkPlatform(washer);
+    assert.ok(L.error.some((l) => /clientId/.test(l)), '8888 기기는 di를 못 읽는데 요구하지 않았다');
   });
 
   console.log(`\n  총 ${pass + fail.length}건 / 실패 ${fail.length}\n`);
