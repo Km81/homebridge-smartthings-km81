@@ -186,7 +186,7 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     c.emit('connect');
     b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });            // 8888: progress/energy 없음
     b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer', hasProgress: true, hasEnergy: true });
-    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true });
+    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true });
 
     // 모든 검색 payload가 같은 availability_topic 하나만 참조해야 한다.
     const cfgs = c.published.filter(p => /\/config$/.test(p.topic)).map(p => JSON.parse(p.payload));
@@ -218,6 +218,7 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     ok(['power_w', 'energy_kwh', 'humidity', 'filter_percent'].every(k => uids.includes(`km81_seungjun_ac_${k}`)),
       '승준 에어컨 전력·에너지·습도·필터 센서 발행');
     ok(uids.includes('km81_seungjun_ac_light'), '승준 조명 스위치 발행(hasLight)');
+    ok(uids.includes('km81_seungjun_ac_sound'), '승준 효과음 스위치 발행(hasSound)');
     // ★건조기(로컬)는 진행률·에너지 센서, 세탁기(8888)는 없어야 한다
     ok(uids.includes('km81_dryer2_progress') && uids.includes('km81_dryer2_energy_kwh'),
       '건조기 진행률·에너지 센서 발행');
@@ -229,10 +230,10 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
 
     // ★제어값+모니터링값이 한 state 토픽에 병합 발행되는가
     b.publishSmartAcState('seungjun_ac', { power: true, currentTemp: 26, coolingSetpoint: 24, windFree: false, autoClean: true });
-    b.publishSmartAcSensors('seungjun_ac', { power_w: 1200, cumulative_kwh: 114.62, humidity: 65, filter_percent: 3.6, light: true });
+    b.publishSmartAcSensors('seungjun_ac', { power_w: 1200, cumulative_kwh: 114.62, humidity: 65, filter_percent: 3.6, light: true, sound: false });
     const merged = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/seungjun_ac/state').pop().payload);
-    ok(merged.mode === 'cool' && merged.power_w === 1200 && merged.humidity === 65 && merged.filter_percent === 3.6 && merged.light === 'ON',
-      '제어값+모니터링값 병합 발행', JSON.stringify(merged));
+    ok(merged.mode === 'cool' && merged.power_w === 1200 && merged.humidity === 65 && merged.filter_percent === 3.6 && merged.light === 'ON' && merged.sound === 'OFF',
+      '제어값+모니터링값 병합 발행(효과음 포함)', JSON.stringify(merged));
 
     // ★건조기 남은시간 raw는 60분 상한이 없다(HomeKit Valve 캡 회피)
     b.publishLaundryState('dryer2', { state: 'running', remainingMin: 109, progress: 42, cumulative_kwh: 1222.6 });
