@@ -1,6 +1,6 @@
 {
   "name": "homebridge-smartthings-km81",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "Unified Homebridge plugin for Samsung devices via SmartThings (legacy AC over TLSv1, modern AC, washer/dryer with notification sensors).",
   "main": "index.js",
   "scripts": {
@@ -39,7 +39,9 @@
   "dependencies": {
     "axios": "^1.7.2",
     "axios-retry": "^4.4.0",
-    "lru-cache": "^10.2.2",
+    "lru-cache": "^10.2.2"
+  },
+  "optionalDependencies": {
     "mqtt": "^5.15.2"
   }
 }

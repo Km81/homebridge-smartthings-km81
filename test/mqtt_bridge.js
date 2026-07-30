@@ -394,6 +394,41 @@ setTimeout(() => {
             });
             ok(hits.length === 0, '중계 로그에 기기 장애 경보 문구 없음', hits.join(', ') || '0건');
 
+            // ── ⑨ ★index.js가 attach에 logic을 넘기는가 (2026-07-30 실측으로 발견한 결함) ──
+            // attachLaundry 호출에서 logic이 빠지면 client=null → 로컬 건조기가 8888 세탁기로
+            // 오인되어 진행률·에너지·raw 남은시간이 통째로 사라진다. 코드 리뷰 4회가 놓치고
+            // 실기기 배포 후에야 드러났다 — 그래서 정적 검사로 잠근다.
+            console.log('\n⑨ ★index.js가 attach에 logic·platform을 전달한다');
+            {
+              const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'), 'utf8');
+              const mAc = src.match(/attachSmartAc\(\{[^}]*\}\)/);
+              const mLa = src.match(/attachLaundry\(\{[^}]*\}\)/);
+              const mCommon = src.match(/const common = \{[^}]*\}/);
+              ok(!!mAc && /\blogic\b/.test(mAc[0]), 'attachSmartAc 호출에 logic 포함');
+              ok(!!mLa && /\blogic\b/.test(mLa[0]), 'attachLaundry 호출에 logic 포함(로컬 건조기 센서 누락 방지)');
+              ok(!!mCommon && /\bplatform\b/.test(mCommon[0]), 'common에 platform 포함(폴러 정리용)');
+
+              // ★명시 mqttSlug도 중복 방지 집합에 등록해야 한다 — 안 하면 두 기기가 같은 토픽에
+              //   상태를 번갈아 발행한다(적대 감사 Medium).
+              ok(/_usedSlugs\.add\(explicit\)/.test(src),
+                '명시 mqttSlug를 사용 집합에 등록(토픽 충돌 방지)');
+              // ★slug가 null(충돌)이면 중계에서 빠져야 한다
+              ok(/if \(!slug\) return;/.test(src), 'slug 충돌 시 중계 제외');
+
+              // ★mqtt는 선택적 의존성이어야 한다 — 설치 실패가 플러그인 전체를 못 뜨게 하면 안 된다
+              const pkg = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'package.json'), 'utf8'));
+              ok(!!(pkg.optionalDependencies && pkg.optionalDependencies.mqtt) && !(pkg.dependencies && pkg.dependencies.mqtt),
+                'mqtt가 optionalDependencies에 있음(홈킷 보호)');
+
+              // ★브로커에 못 붙으면 1회 warn — 예전엔 기본 로그에서 완전 무음이었다
+              const brSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'mqtt', 'MqttBridge.js'), 'utf8');
+              ok(/브로커에 아직 접속하지 못했습니다/.test(brSrc), '브로커 미접속 시 warn 알림 존재');
+              // 그 문구가 hb-watch 경보 어휘와 겹치지 않아야 한다
+              ok(!/(폴링 실패|상태 조회 실패|상태 폴링 오류|연결 실패|무응답|최종 요청 실패)/.test(
+                (brSrc.match(/브로커에 아직 접속하지 못했습니다[\s\S]{0,200}/) || [''])[0]),
+                '미접속 warn 문구가 기기 장애 경보 어휘를 피함');
+            }
+
             // ── 마무리 ──
             console.log(`\n${fail === 0 ? '✅ 전부 통과' : '❌ 실패 ' + fail + '건'} (통과 ${pass})`);
             process.exit(fail === 0 ? 0 : 1);

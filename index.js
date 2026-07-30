@@ -418,10 +418,21 @@ class SmartThingsKM81Platform {
   // 뒤바뀌면 HA에 유령 엔티티가 쌓이기 때문(적대 감사). deviceId 조각은 순서·재부팅 무관.
   _mqttSlug(configDevice, deviceId) {
     const norm = s => String(s || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-    const explicit = norm(configDevice.mqttSlug);
-    if (explicit) return explicit;   // 명시 slug는 중복 방지 대상 아님(사용자 책임)
-    const base = norm(configDevice.deviceType) || 'device';
     if (!this._usedSlugs) this._usedSlugs = new Set();
+    const explicit = norm(configDevice.mqttSlug);
+    if (explicit) {
+      // ★명시 slug도 사용 집합에 등록한다. 예전엔 등록을 안 해서, 두 대 중 한 대만
+      //   mqttSlug='washer'를 지정하면 나머지 자동 slug도 'washer'가 되어 **두 기기 상태가
+      //   한 토픽에 번갈아 발행**됐다(오류 로그 없이 플래핑, 적대 감사 지적).
+      if (this._usedSlugs.has(explicit)) {
+        this.log.warn(`[MQTT] '${configDevice.deviceLabel}'의 mqttSlug '${explicit}'가 이미 다른 기기에 쓰였습니다 `
+          + `— 토픽이 겹쳐 상태가 섞이므로 설정에서 서로 다르게 지정하세요. 이 기기는 중계에서 제외합니다.`);
+        return null;
+      }
+      this._usedSlugs.add(explicit);
+      return explicit;
+    }
+    const base = norm(configDevice.deviceType) || 'device';
     if (!this._usedSlugs.has(base)) { this._usedSlugs.add(base); return base; }
     // 이미 같은 종류가 있었다 → deviceId 앞 6자로 안정적으로 가른다.
     const suffix = norm(deviceId).replace(/_/g, '').slice(0, 6) || 'x';
@@ -450,11 +461,15 @@ class SmartThingsKM81Platform {
         + `메인 구획만 반영합니다(보조 구획 미반영). 합침 모드 사용을 권합니다.`);
     }
     const slug = this._mqttSlug(configDevice, accessory.context?.device?.deviceId);
+    if (!slug) return;   // slug 충돌 — 위에서 경고했고, 섞인 상태를 내보내는 것보다 빼는 게 안전
     try {
       const common = { bridge: this.mqtt, api: this.api, log: this.log, accessory, configDevice, slug, platform: this };
+      // ★logic을 두 경로에 모두 넘긴다 — 세탁물 쪽에 빼먹으면 client가 null이 되어
+      //   로컬 건조기가 8888 세탁기와 같은 취급을 받고 진행률·에너지·raw 남은시간이 통째로
+      //   누락된다(2026-07-30 실측으로 발견, 코드 리뷰 4회가 놓친 결함).
       const ok = configDevice.deviceType === 'smartAc'
         ? attachSmartAc({ ...common, logic })
-        : attachLaundry({ ...common, kind: configDevice.deviceType });
+        : attachLaundry({ ...common, logic, kind: configDevice.deviceType });
       if (ok) this.log.info(`[MQTT] '${accessory.displayName}' 중계 시작 — ${this.mqtt.base}/${slug}`);
     } catch (e) {
       // ⚠️문구 주의: NAS hb-watch가 '연결 실패'·'무응답'·'폴링 실패' 등을 텔레그램 경보로 올린다.
