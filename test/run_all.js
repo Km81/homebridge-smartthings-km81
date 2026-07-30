@@ -27,6 +27,9 @@ const SUITES = [
   // v2.6.7 — 인증서 발급은 **첫 설치에서만** 지나가는 경로라 우리 기기로는 절대 안 깨진다.
   //          최신 배포판에서 발급이 통째로 실패하던 결함이 사용자 로그로만 드러났다.
   { file: 'bridge_cert.js' },
+  // v2.6.10 — 첫 부팅(의존성 설치 중) 경로. LocalApplianceClient를 스텁으로 갈아끼우므로
+  //           진짜 클라이언트를 쓰는 스위트와 반드시 별도 프로세스여야 한다.
+  { file: 'first_boot.js' },
   // v2.5.0 — MQTT 브리지 계약(availability 의미론·setValue 경유 명령·경보 문구 충돌·발행 dedupe)
   { file: 'mqtt_bridge.js' },
   //   keepalive   — v2.4.2~2.4.5의 새 접합부(타이머·게이트·실패 처리)를 가짜 시계로

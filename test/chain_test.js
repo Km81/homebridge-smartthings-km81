@@ -316,6 +316,31 @@ async function smartOffSceneSuppress() {
   for (const t of o._resyncTimers.values()) clearTimeout(t);
 }
 
+// ★v2.6.10 — 끄기 장면 창에서는 **체인 예약 자체를** 막아야 한다.
+// #14는 개별 write(_setWindFree/_setAutoClean) 억제만 덮고 있었고, 체인을 거는 입구는
+// 무방비였다. LegacyAC는 v1.8.25에 같은 가드를 넣었는데 SmartAC로 전파되지 않았다.
+// 유출 경로: 켜기 직후 끄기가 겹치면 뒤늦게 온 켜기 응답이 체인을 재예약 → 4초 뒤 setMode가
+// 꺼진 기기를 다시 켠다(밤새 켜짐).
+async function smartOffSceneBlocksChain() {
+  console.log('SmartAC #14b off-scene window blocks power-on chain scheduling');
+  const calls = [];
+  const o = makeSmart(calls);
+  o._offIntentTs = Date.now();                       // 끄기 의도가 살아 있는 창
+  o._schedulePowerOnResends('dev', { mode: 'dryClean', autoClean: true, displayName: 'AC' });
+  check('no timer armed in off window', !o._powerOnModeTimer, String(o._powerOnModeTimer));
+  await sleep(5000);
+  check('setMode NOT sent (재점등 차단)', !calls.some(c => c[0] === 'setMode'), JSON.stringify(calls));
+  check('setAutoClean NOT sent', !calls.some(c => c[0] === 'setAutoClean'), JSON.stringify(calls));
+  // 대조군: ON 의도가 마커를 지우면 체인은 정상 동작한다(#1이 이미 덮지만 같은 rig로 재확인).
+  const calls2 = [];
+  const o2 = makeSmart(calls2);
+  o2._offIntentTs = 0;
+  o2._schedulePowerOnResends('dev', { mode: 'dryClean', autoClean: true, displayName: 'AC' });
+  await sleep(2600);
+  check('대조군 — 창 밖에서는 체인이 돈다', calls2.some(c => c[0] === 'setMode'), JSON.stringify(calls2));
+  for (const t of o2._resyncTimers.values()) clearTimeout(t);
+}
+
 async function legacyOffSceneHelper() {
   console.log('LegacyAC #15 _isOffSceneWindow marker semantics + chain unaffected');
   const calls = [];
@@ -516,6 +541,7 @@ async function smartOffRetry() {
   await legacyBothOff();
   await legacyStepFailure();
   await smartOffSceneSuppress();
+  await smartOffSceneBlocksChain();
   await legacyOffSceneHelper();
   await clientRetryAndCoalesce();
   await clientMaxAgeCache();

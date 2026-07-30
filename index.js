@@ -198,13 +198,21 @@ class SmartThingsKM81Platform {
         // ★첫 설치 중이면 이건 '실패'가 아니라 '아직 진행 중'이다(v2.6.7).
         //   pip 설치는 최대 180초인데 기동 예산은 20초라, **성공하는 첫 설치도** 반드시 이 분기를
         //   지난다. 예전엔 모든 신규 사용자가 첫 부팅에서 가짜 실패를 보고 재설치·문의를 했다.
-        if (this.localClient.isInstalling && this.localClient.isInstalling()) {
-          this.log.info('로컬 경로 최초 설치가 진행 중입니다 — 몇 분 걸릴 수 있습니다. '
-            + '끝나면 자동으로 로컬 제어로 전환되며, 그때까지는 아직 준비되지 않은 상태입니다.');
-          return;
-        }
+        //
+        // ⛔★여기서 절대 return 하지 말 것(v2.6.10 — v2.6.7이 넣은 return을 되돌림).
+        //   그 return은 _didFinishLaunching을 통째로 빠져나가 **아래 전부**를 건너뛴다:
+        //   토큰 로드(init) → 기기 바인딩 → stale 정리 → 클라우드 keepalive.
+        //   즉 **첫 설치의 첫 부팅에서 SmartThings 기기가 하나도 안 붙었다.** 위 주석이
+        //   기동 예산을 둔 이유로 경고하던 바로 그 '무성 유실'을 스스로 만든 셈이다.
+        //   계속 진행하면 기기는 localClient에 등록되고, 준비 전에는 요청마다 클라우드로
+        //   폴백하다가 설치가 끝나면 저절로 로컬로 올라선다 — 재시작이 필요 없다.
+        //   (Promise.race의 패자는 취소되지 않으므로 start()는 뒤에서 계속 진행된다.)
+        const installing = this.localClient.isInstalling && this.localClient.isInstalling();
         const anyFallback = localDevices.some(d => d?.local?.fallbackToCloud !== false);
-        if (anyFallback) {
+        if (installing) {
+          this.log.info('로컬 경로 최초 설치가 진행 중입니다 — 몇 분 걸릴 수 있습니다. '
+            + '그동안은 클라우드로 동작하고, 설치가 끝나면 저절로 로컬로 전환됩니다.');
+        } else if (anyFallback) {
           this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
         } else {
           this.log.error('로컬 브릿지 기동 실패 + 클라우드 폴백도 꺼져 있음 — '
