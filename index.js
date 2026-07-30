@@ -86,13 +86,25 @@ class SmartThingsKM81Platform {
       d && (d.deviceType === 'smartAc' || d.deviceType === 'washer' || d.deviceType === 'dryer')
     );
 
+    // ★클라우드가 실제로 필요한 기기가 있을 때만 OAuth 항목을 요구한다(v2.6.13).
+    //   deviceId를 직접 적고 transport=local이며 폴백까지 끈 기기는 클라우드를 한 번도 쓰지 않는다.
+    //   그런 구성에서도 "필요합니다"를 error로 찍고 있었는데, 사실이 아니었다
+    //   (실측: OAuth 항목을 전부 비워도 기기는 로컬 경로에 정상 등록된다).
+    const needsCloud = this.devices.some(d => d
+      && (d.deviceType === 'smartAc' || d.deviceType === 'washer' || d.deviceType === 'dryer')
+      && (!d.deviceId || d.transport !== 'local' || d.local?.fallbackToCloud !== false));
+
     if (hasSmartThingsDevices) {
       const missing = [];
       if (!this.config.clientId) missing.push('clientId');
       if (!this.config.clientSecret) missing.push('clientSecret');
       if (!this.config.redirectUri) missing.push('redirectUri');
-      if (missing.length > 0) {
+      if (missing.length > 0 && !needsCloud) {
+        this.log.info('SmartThings 연결 없이 로컬 전용으로 동작합니다 (클라우드 호출 0회).');
+      } else if (missing.length > 0) {
         this.log.error(`SmartThings 장치를 사용하려면 다음 필드가 필요합니다: ${missing.join(', ')}`);
+        this.log.error('※ 모든 SmartThings 기기에 deviceId를 적고 전송 경로를 로컬로 두고 '
+          + "'로컬 실패 시 클라우드 사용'을 끄면, 이 항목들 없이 동작합니다.");
       } else {
         try { new URL(this.config.redirectUri); }
         catch (e) {
