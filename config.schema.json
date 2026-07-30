@@ -307,9 +307,9 @@
               "description": "기기 상태를 이 파일로 내보냅니다(HA 등 외부에서 읽기용)."
             },
             "deviceLabel": {
-              "title": "[SmartThings] 장치 이름",
+              "title": "[SmartThings] 장치 이름 (deviceId를 안 적으면 필수)",
               "type": "string",
-              "description": "SmartThings 앱에 등록된 이름과 정확히 같아야 합니다."
+              "description": "SmartThings 앱에 등록된 이름과 정확히 같아야 합니다(글자 하나까지). ⚠️이름으로 찾는 것은 SmartThings 클라우드 조회이므로, 아래 OAuth 연결이 먼저 끝나 있어야 합니다. 앱에서 같은 이름이 둘이면 엉뚱한 기기가 잡힐 수 있으니 이름을 고유하게 해 두세요."
             },
             "model": {
               "title": "모델명 (선택)",
@@ -456,11 +456,11 @@
               "type": "object",
               "properties": {
                 "host": {
-                  "title": "[SmartThings] 기기 IP",
+                  "title": "[SmartThings] 기기 IP (전송 경로가 로컬이면 필수)",
                   "type": "string",
                   "placeholder": "192.168.1.78",
                   "required": false,
-                  "description": "공유기에서 고정 IP로 잡아두세요. 로컬을 쓰려면 필수입니다."
+                  "description": "공유기에서 고정 IP로 잡아두세요. 포트는 자동으로 찾습니다. 비워 두면 로컬로 붙지 못하고 클라우드로 동작합니다."
                 },
                 "port": {
                   "title": "DTLS 포트 (선택)",
@@ -477,7 +477,7 @@
                   "title": "[SmartThings] 로컬 실패 시 클라우드 사용",
                   "type": "boolean",
                   "default": true,
-                  "description": "로컬이 실패하면 클라우드로 대신 처리합니다."
+                  "description": "로컬이 실패하면 클라우드로 대신 처리합니다. 끄면 SmartThings API를 한 번도 쓰지 않지만, 로컬이 실패하면 그 기기는 제어되지 않습니다(홈 앱에 '응답 없음'). 안정적으로 동작하는 것을 확인한 뒤 끄세요."
                 },
                 "token": {
                   "title": "[세탁기] 기기 토큰",
@@ -487,10 +487,10 @@
               }
             },
             "deviceId": {
-              "title": "SmartThings deviceId (선택)",
+              "title": "SmartThings deviceId (이름을 적었으면 비워 두세요)",
               "type": "string",
               "placeholder": "3ea2a924-ec77-9f1e-8d4f-1900d3f3e791",
-              "description": "비워두면 장치 이름으로 찾습니다. 적어두면 부팅이 빨라지고 클라우드 조회를 건너뜁니다.",
+              "description": "둘 중 하나는 반드시 있어야 기기가 만들어집니다. 처음엔 비워 두고 장치 이름으로 붙인 다음, 로그의 \"↳ deviceId=… — config에 적어두면 다음 부팅부터 클라우드 조회를 건너뜁니다\" 줄에서 값을 복사해 여기에 넣으세요. 그 뒤로는 부팅 시 클라우드를 부르지 않습니다.",
               "condition": {
                 "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               }
