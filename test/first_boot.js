@@ -353,6 +353,69 @@ const mkSelf = (overrides = {}) => {
       "--upgrade가 없다 — 파일이 이미 있으면 pip이 건너뛰고 exit 0을 주는데 우리는 성공으로 판정한다");
   });
 
+  // ⛔★v2.7.3 — 재시도 타이머 **본문**을 실제로 돌린다.
+  // v2.7.2의 계약은 `_scheduleLocalIdRetry`를 스텁으로 대체해서, 타이머 안쪽 코드가
+  // 한 번도 실행된 적이 없었다. 그 안에 v2.7.1이 막은 것과 같은 급의 결함 2개가 들어 있었다.
+  // "요구사항을 테스트에 적는 것과, 그 계약을 우회하는 새 상태에 테스트를 붙이는 것은 다른 일."
+  console.log('\n[재시도 타이머 본문]');
+
+  const runRetry = async ({ cloudOk, probes, lateFill = null }) => {
+    const L = { info: [], warn: [], error: [] };
+    let cleaned = 0;
+    const bound = [];
+    const devs = [
+      { deviceType: 'smartAc', deviceLabel: 'A', transport: 'local', local: { host: '10.0.0.1' } },
+    ];
+    const self = {
+      log: { info: (m) => L.info.push(String(m)), warn: (m) => L.warn.push(String(m)),
+        error: (m) => L.error.push(String(m)), debug: () => {} },
+      _cloudOk: cloudOk,
+      _stopped: false,
+      smartthings: null,
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {}, probeIdentity: probes },
+      _probeOne: Platform.prototype._probeOne,
+      _scheduleLocalIdRetry: Platform.prototype._scheduleLocalIdRetry,   // ★진짜 구현
+      registerShutdown: () => {},
+      _bindSmartThingsDevice: (d) => bound.push(d.deviceId),
+      _cleanupStaleAccessories: () => { cleaned++; },
+    };
+    if (lateFill) devs[0].deviceId = lateFill;   // 예산 초과 뒤 늦게 채워진 상황
+    const real = global.setTimeout;
+    global.setTimeout = (fn) => { const h = real(fn, 0); if (h.unref) h.unref(); return h; };
+    try {
+      self._scheduleLocalIdRetry(devs, 1);
+      await new Promise((r) => real(r, 60));
+    } finally { global.setTimeout = real; }
+    return { L, cleaned, bound, devs };
+  };
+
+  await t('★재시도 정리도 클라우드 신호를 본다 (부팅에서 막은 삭제를 30초 뒤 대신 하지 않는다)', async () => {
+    const r = await runRetry({ cloudOk: false, probes: async () => ({ deviceId: 'x-1', name: 'A' }) });
+    assert.strictEqual(r.cleaned, 0,
+      '클라우드가 아직 죽었는데 정리했다 — v2.7.1이 막은 삭제가 다른 문으로 열린다');
+    assert.ok(r.L.warn.some((l) => /계속 건너뜁니다/.test(l)), '억제 사실을 알리지 않는다');
+  });
+
+  await t('클라우드가 살아 있으면 재시도 뒤 정리한다 (대조군)', async () => {
+    const r = await runRetry({ cloudOk: true, probes: async () => ({ deviceId: 'x-2', name: 'A' }) });
+    assert.strictEqual(r.cleaned, 1, '정상 상황인데 정리를 영영 안 하면 고아가 쌓인다');
+  });
+
+  await t('★예산을 넘겨 늦게 채워진 deviceId도 바인딩한다 (영영 안 붙던 결함)', async () => {
+    const r = await runRetry({
+      cloudOk: true,
+      probes: async () => { throw new Error('부르면 안 된다'); },
+      lateFill: 'late-id',
+    });
+    assert.deepStrictEqual(r.bound, ['late-id'],
+      '늦게 성공한 프로브가 재시도를 무장해제해 그 기기가 영영 안 붙는다');
+  });
+
+  await t('같은 기기를 두 번 붙이지 않는다', async () => {
+    const r = await runRetry({ cloudOk: true, probes: async () => ({ deviceId: 'x-3', name: 'A' }) });
+    assert.strictEqual(r.bound.length, 1, `중복 바인딩 ${r.bound.length}회`);
+  });
+
   console.log(`\n  총 ${pass + fail.length}건 / 실패 ${fail.length}\n`);
   process.exit(fail.length ? 1 : 0);
 })();

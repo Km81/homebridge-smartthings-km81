@@ -235,8 +235,13 @@ class SmartThingsKM81Platform {
         const installing = this.localClient.isInstalling && this.localClient.isInstalling();
         const anyFallback = localDevices.some(d => d?.local?.fallbackToCloud !== false);
         if (installing) {
+          // ★폴백이 없으면 "그동안 클라우드로 동작"은 거짓이다(v2.7.3).
+          //   같은 부류를 v2.4.6·v2.6.6에서 두 번 고치고도 이 분기에만 전파하지 않았다.
+          const canCloud = !!this.smartthings && anyFallback;
           this.log.info('로컬 경로 최초 설치가 진행 중입니다 — 몇 분 걸릴 수 있습니다. '
-            + '그동안은 클라우드로 동작하고, 설치가 끝나면 저절로 로컬로 전환됩니다.');
+            + (canCloud
+              ? '그동안은 클라우드로 동작하고, 설치가 끝나면 저절로 로컬로 전환됩니다.'
+              : '설치가 끝나면 저절로 연결되며, 그때까지 이 기기들은 제어되지 않습니다.'));
         } else if (anyFallback) {
           this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
         } else {
@@ -273,14 +278,17 @@ class SmartThingsKM81Platform {
     //   사용자의 자동화·방 배치·종료 알림 센서가 함께 사라진다.
     //   두 신호는 원인이 다르므로 절대 한쪽이 다른 쪽을 덮어쓰면 안 된다.
     let cloudOk = needDiscovery.length === 0;
+    this._cloudOk = cloudOk;   // 재시도 타이머가 같은 조건식을 쓰게 한다
     if (stDevices.length > 0 && this.smartthings) {
       if (!hasToken) {
         this.oauthServer.start(async () => {
           const ok = await this._discoverAndBindSmartThings(needDiscovery);
+          this._cloudOk = ok;
           if (ok && localIdOk) this._cleanupStaleAccessories();
         });
       } else if (needDiscovery.length > 0) {
         cloudOk = await this._discoverAndBindSmartThings(needDiscovery);
+        this._cloudOk = cloudOk;
       }
     }
 
@@ -386,19 +394,36 @@ class SmartThingsKM81Platform {
       return;
     }
     const timer = setTimeout(async () => {
+      // ⛔★`still`이 비었다고 그냥 돌아가면 안 된다(v2.7.3).
+      //   `Promise.race`의 패자는 취소되지 않으므로, 15초 예산을 **넘겨 늦게 성공한** 프로브가
+      //   그 사이 `d.deviceId`를 채운다. v2.7.2는 그걸 "할 일 없음"으로 보고 return 해서,
+      //   그 기기가 **재시작 전까지 영영 바인딩되지 않았다**(로그는 성공 문구만 남고 error 0줄).
+      //   그래서 조회는 남은 것만 하되, **바인딩은 아직 안 붙은 것 전부**를 대상으로 한다.
       const still = pending.filter((d) => !d.deviceId);
-      if (still.length === 0) return;
-      const done = [];
-      await Promise.allSettled(still.map(async (d) => {
-        try { await this._probeOne(d); done.push(d); } catch (_) { /* 다음 회차 */ }
-      }));
-      for (const d of done) {
+      if (still.length > 0) {
+        await Promise.allSettled(still.map(async (d) => {
+          try { await this._probeOne(d); } catch (_) { /* 다음 회차 */ }
+        }));
+      }
+      for (const d of pending) {
+        if (!d.deviceId || d.__km81RetryBound) continue;
+        d.__km81RetryBound = true;
+        if (this.smartthings) this.smartthings.registerDeviceLabel(d.deviceId, labelOf(d));
         this.log.info(`[${labelOf(d)}] 준비가 끝나 지금 연결합니다.`);
         this._bindSmartThingsDevice({ deviceId: d.deviceId, label: labelOf(d) }, d);
       }
+
       const left = pending.filter((x) => !x.deviceId);
       if (left.length === 0) {
-        this._cleanupStaleAccessories();   // 이제야 전체 목록이 확정됐다
+        // ⛔★부팅 경로와 **같은 조건식**이어야 한다(v2.7.3).
+        //   v2.7.2는 여기서 `cloudOk`를 보지 않아, 부팅에서 올바르게 억제했던 정리를
+        //   30초 뒤에 대신 실행했다 — v2.7.1이 릴리스 하나를 써서 막은 그 경로가
+        //   다른 문으로 다시 열린 것이다(액세서리 영구 삭제).
+        if (this._cloudOk) this._cleanupStaleAccessories();
+        else {
+          this.log.warn('SmartThings 장치 검색이 아직 성공하지 않아 오래된 액세서리 정리를 '
+            + '계속 건너뜁니다. (자동화 보호)');
+        }
         return;
       }
       this._scheduleLocalIdRetry(left, attempt + 1);
