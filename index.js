@@ -338,8 +338,25 @@ class SmartThingsKM81Platform {
         + '— 기기가 켜져 있고 IP가 맞는지 확인하세요. 다음 재시도는 브릿지가 준비되면 자동으로 합니다.');
     }
 
+    // ★서로 다른 항목이 **같은 deviceId**로 수렴하면 액세서리 하나가 조용히 사라진다(v2.7.4).
+    //   두 항목에 같은 IP를 적었거나(오타), DHCP 재배정으로 A의 host가 실제로는 B를 가리키게 된
+    //   경우다. 신원 대조(`_doVerify`)는 config deviceId와 기기 di를 비교하는데, 프로브가 채운
+    //   deviceId는 정의상 그 기기의 di라 **항상 통과**한다 → 아무도 못 잡았다.
+    //   UUID가 같으면 뒤 항목이 앞 것을 덮고, 남은 액세서리는 stale로 판정돼 삭제된다.
+    const seen = new Map();
+    let duplicated = false;
+    for (const d of stDevices) {
+      if (!d.deviceId) continue;
+      const prev = seen.get(d.deviceId);
+      if (prev) {
+        duplicated = true;
+        this.log.error(`[${labelOf(d)}]와 [${labelOf(prev)}]가 같은 기기를 가리킵니다`
+          + ` (deviceId 동일). 기기 IP가 서로 다른지 확인하세요 — 그대로 두면 한 대만 남습니다.`);
+      } else seen.set(d.deviceId, d);
+    }
+
     const unresolved = need.filter((d) => !d.deviceId);
-    if (unresolved.length === 0) return true;
+    if (unresolved.length === 0) return !duplicated;
 
     // ★브릿지가 아직 안 떴을 뿐이면 **다시 시도한다**(v2.7.2).
     //   pip 첫 설치는 최대 180초인데 이 함수는 20초 예산 직후 한 번만 불린다 —
@@ -353,12 +370,15 @@ class SmartThingsKM81Platform {
   /** 기기 한 대의 deviceId를 캐시 또는 기기 질의로 정한다. 이름도 함께 받아 라벨을 채운다. */
   async _probeOne(d) {
     const host = d.local.host;
-    const label = labelOf(d);
+    // ★라벨이 없으면 기기 종류(`smartAc`)보다 **IP**가 쓸모 있다(v2.7.4).
+    //   이 시점엔 아직 이름을 모르는 게 정상이고, 사용자가 찾아갈 단서는 IP뿐이다.
+    const label = d.deviceLabel || host;
     const cached = this.localClient.readDiscovered(host);
     if (cached?.deviceId) {
       d.deviceId = cached.deviceId;
       // ★이름도 캐시에서 되살린다 — 라벨을 비우면 홈킷 이름과 전 로그가 36자 UUID가 된다.
       if (!d.deviceLabel && cached.name) d.deviceLabel = cached.name;
+      d.__km81LocalId = true;
       this.log.debug?.(`[${label}] deviceId를 캐시에서 읽음 (${host})`);
       return;
     }
@@ -367,16 +387,27 @@ class SmartThingsKM81Platform {
       d.deviceId = found.deviceId;
       // ★기기가 알려준 이름을 **쓴다**(v2.7.2). v2.7.0은 로그에만 쓰고 버려서,
       //   문서가 권장하는 '이름 비우기' 구성에서 홈 앱 이름이 UUID가 됐다.
-      if (!d.deviceLabel && found.name) d.deviceLabel = found.name;
+      const adopted = !d.deviceLabel && !!found.name;
+      if (adopted) d.deviceLabel = found.name;
+      d.__km81LocalId = true;   // 출처 표시 — 로그가 "config의 deviceId"라고 말하지 않게
       this.localClient.writeDiscovered(host, found);
-      this.log.info(`[${labelOf(d)}] deviceId를 기기에서 확인했습니다 — ${found.name || host}`);
+      // ★이름을 라벨로 채운 경우 접두와 꼬리가 같은 문자열이 되어 중복으로 읽혔다(v2.7.4).
+      this.log.info(adopted
+        ? `[${found.name}] deviceId를 기기에서 확인했습니다 (${host})`
+        : `[${label}] deviceId를 기기에서 확인했습니다 — ${found.name || host}`);
+      d.__km81ProbeFailed = 0;
     } catch (e) {
       // 원인이 브릿지면 기기·IP를 지목하지 않는다 — 엉뚱한 곳을 보게 만든다.
       const bridgeNotReady = /브릿지|미준비/.test(e.message || '');
-      this.log.warn(`[${label}] ${host}의 deviceId를 아직 확인하지 못했습니다 — `
+      // ★재시도가 최대 12회라 그대로 두면 같은 줄이 13번 나온다(v2.7.4).
+      //   첫 회만 사용자에게 알리고 이후는 debug로 — 최종 실패는 재시도 쪽이 error로 맡는다.
+      d.__km81ProbeFailed = (d.__km81ProbeFailed || 0) + 1;
+      const line = `[${label}] ${host}의 deviceId를 아직 확인하지 못했습니다 — `
         + (bridgeNotReady
           ? `로컬 브릿지가 준비되면 자동으로 다시 시도합니다: ${e.message}`
-          : `기기 전원과 IP를 확인하세요: ${e.message}`));
+          : `기기 전원과 IP를 확인하세요: ${e.message}`);
+      if (d.__km81ProbeFailed === 1) this.log.warn(line);
+      else this.log.debug?.(`${line} (${d.__km81ProbeFailed}회째)`);
       throw e;
     }
   }
@@ -442,7 +473,12 @@ class SmartThingsKM81Platform {
       const id = (configDevice.deviceId || '').trim();
       if (!id) { remaining.push(configDevice); continue; }
       const label = configDevice.deviceLabel || id;
-      this.log.info(`'${label}' (${configDevice.deviceType}) — config의 deviceId로 바로 연결 (클라우드 조회 생략)`);
+      // ★출처를 구분해 말한다(v2.7.4). 기기에게 물어 얻은 deviceId인데 "config의 deviceId"라고
+      //   하면, 바로 앞줄의 `deviceId를 기기에서 확인했습니다`와 모순돼 읽는 사람이 헷갈린다.
+      this.log.info(`'${label}' (${configDevice.deviceType}) — `
+        + (configDevice.__km81LocalId
+          ? '기기에서 확인한 deviceId로 연결 (클라우드 조회 없음)'
+          : 'config의 deviceId로 바로 연결 (클라우드 조회 생략)'));
       if (this.smartthings) this.smartthings.registerDeviceLabel(id, label);
       this._bindSmartThingsDevice({ deviceId: id, label }, configDevice);
     }

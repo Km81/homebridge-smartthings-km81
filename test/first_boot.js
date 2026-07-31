@@ -416,6 +416,72 @@ const mkSelf = (overrides = {}) => {
     assert.strictEqual(r.bound.length, 1, `중복 바인딩 ${r.bound.length}회`);
   });
 
+  // ★v2.7.4 — 로그 정확성과 조용한 삭제
+  console.log('\n[v2.7.4 — 로그 정확성 · 중복 IP]');
+
+  await t('★두 항목이 같은 기기를 가리키면 알리고 정리를 억제한다 (조용한 삭제 방지)', async () => {
+    const L = { info: [], warn: [], error: [] };
+    const devs = [
+      { deviceType: 'smartAc', deviceLabel: '거실', transport: 'local', local: { host: '10.0.0.1' } },
+      { deviceType: 'smartAc', deviceLabel: '침실', transport: 'local', local: { host: '10.0.0.1' } },
+    ];
+    const self = {
+      log: { info: (m) => L.info.push(String(m)), warn: (m) => L.warn.push(String(m)),
+        error: (m) => L.error.push(String(m)), debug: () => {} },
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {},
+        probeIdentity: async () => ({ deviceId: 'same-di', name: 'AC' }) },
+      _probeOne: Platform.prototype._probeOne,
+      _scheduleLocalIdRetry: () => {}, registerShutdown: () => {},
+      _bindSmartThingsDevice: () => {}, _cleanupStaleAccessories: () => {},
+    };
+    const okRet = await Platform.prototype._resolveLocalDeviceIds.call(self, devs);
+    assert.strictEqual(okRet, false, 'true를 돌려주면 액세서리 하나가 조용히 삭제된다');
+    assert.ok(L.error.some((l) => /같은 기기.*가리킵니다/.test(l)), '중복을 알리지 않는다');
+  });
+
+  await t('★이름을 라벨로 채울 때 같은 문자열이 두 번 나오지 않는다', async () => {
+    const L = [];
+    const devs = [{ deviceType: 'smartAc', transport: 'local', local: { host: '10.0.0.9' } }];
+    const self = {
+      log: { info: (m) => L.push(String(m)), warn: () => {}, error: () => {}, debug: () => {} },
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {},
+        probeIdentity: async () => ({ deviceId: 'x', name: 'Samsung AC' }) },
+    };
+    await Platform.prototype._probeOne.call(self, devs[0]);
+    const line = L.find((l) => /확인했습니다/.test(l));
+    assert.ok(line, '확인 로그가 없다');
+    assert.strictEqual((line.match(/Samsung AC/g) || []).length, 1,
+      `이름이 두 번 나온다: ${line}`);
+  });
+
+  await t('★조회 실패가 반복돼도 사용자 로그는 1줄만 (재시도 12회 × 13줄 방지)', async () => {
+    const L = { warn: [], debug: [] };
+    const d = { deviceType: 'smartAc', transport: 'local', local: { host: '10.0.0.9' } };
+    const self = {
+      log: { info: () => {}, warn: (m) => L.warn.push(String(m)),
+        error: () => {}, debug: (m) => L.debug.push(String(m)) },
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {},
+        probeIdentity: async () => { throw new Error('로컬 브릿지 미준비'); } },
+    };
+    for (let i = 0; i < 5; i++) {
+      await Platform.prototype._probeOne.call(self, d).catch(() => {});
+    }
+    assert.strictEqual(L.warn.length, 1, `warn ${L.warn.length}줄 — 반복 억제가 없다`);
+    assert.strictEqual(L.debug.length, 4, `이후는 debug여야 한다 (실측 ${L.debug.length})`);
+  });
+
+  await t('★라벨이 없으면 기기 종류가 아니라 IP로 부른다', async () => {
+    const L = [];
+    const d = { deviceType: 'smartAc', transport: 'local', local: { host: '10.0.0.9' } };
+    const self = {
+      log: { info: () => {}, warn: (m) => L.push(String(m)), error: () => {}, debug: () => {} },
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {},
+        probeIdentity: async () => { throw new Error('무응답'); } },
+    };
+    await Platform.prototype._probeOne.call(self, d).catch(() => {});
+    assert.ok(L[0] && L[0].includes('[10.0.0.9]'), `IP가 아니라 '${L[0]}'`);
+  });
+
   console.log(`\n  총 ${pass + fail.length}건 / 실패 ${fail.length}\n`);
   process.exit(fail.length ? 1 : 0);
 })();
