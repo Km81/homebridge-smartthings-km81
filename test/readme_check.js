@@ -119,7 +119,10 @@ check(SRC.includes('8888') && README.includes('8888'), '구형 프로토콜 포�
 check(README.includes('8889'), '토큰 콜백 수신 포트 8889 언급');
 
 // ── ④ 기기 종류가 전부 문서화돼 있는가 ────────────────────────────────────────
-const KO = { legacyAc: '구형 에어컨', smartAc: '신형 에어컨', washer: '세탁기', dryer: '건조기' };
+const KO = {
+  legacyAc: '구형 에어컨', smartAc: '신형 에어컨', systemAc: '시스템 에어컨',
+  washer: '세탁기', dryer: '건조기',
+};
 const types = SCHEMA.schema.properties.devices.items.properties.deviceType.oneOf.map((o) => o.enum[0]);
 const undocumented = types.filter((t) => !README.includes(KO[t] || t));
 check(undocumented.length === 0, `기기 종류 ${types.length}종이 모두 README에 설명됨 (누락 ${undocumented.length})`);

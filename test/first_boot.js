@@ -163,6 +163,47 @@ const mkSelf = (overrides = {}) => {
     assert.ok(L.error.some((l) => /clientId/.test(l)), '클라우드를 쓰는데 요구하지 않았다');
   });
 
+  // ── 시스템 에어컨(천장형) 종류 — v2.8.0 ──────────────────────────────────────
+  await t('★시스템 에어컨은 설정을 읽는 순간 신형 에어컨으로 바뀐다 (이후 분기 무변경)', () => {
+    const { p } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: 'systemAc' }]);
+    assert.strictEqual(p.devices[0].deviceType, 'smartAc',
+      'systemAc가 정규화되지 않으면 아래 모든 필터에서 조용히 빠진다');
+  });
+
+  await t('시스템 에어컨도 완전 로컬 구성이면 OAuth를 요구하지 않는다', () => {
+    const { L } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: 'systemAc' }]);
+    assert.ok(!L.error.some((l) => /clientId/.test(l)), 'OAuth 항목을 요구했다');
+    assert.ok(L.info.some((l) => /로컬 전용으로 동작합니다/.test(l)), '로컬 전용 안내가 없다');
+  });
+
+  await t('다른 기기 종류는 정규화가 건드리지 않는다 (대조군)', () => {
+    for (const type of ['legacyAc', 'smartAc', 'washer', 'dryer']) {
+      const { p } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: type }]);
+      assert.strictEqual(p.devices[0].deviceType, type, `${type}가 바뀌었다`);
+    }
+  });
+
+  // ── 모르는 종류가 있으면 액세서리를 지우지 않는다 ────────────────────────────
+  // 오타나, 새 종류를 쓰던 설정을 구버전으로 되돌린 경우 그 기기가 필터에서 조용히 빠지고
+  // 캐시 액세서리가 stale로 판정돼 **경고 없이 영구 삭제**된다(자동화·방 배치 동반 소실).
+  await t('★모르는 장치 종류가 있으면 오래된 액세서리를 지우지 않는다', () => {
+    const { p } = mkPlatform(LOCAL_ONLY);
+    let removed = null;
+    p.api.unregisterPlatformAccessories = (_a, _b, list) => { removed = list; };
+    p.accessories = [{ UUID: 'zzz', displayName: '천장 에어컨' }];
+    p.activeUUIDs = new Set();
+
+    p._unknownTypes = true;
+    p._cleanupStaleAccessories();
+    assert.strictEqual(removed, null, '모르는 종류가 있는데 삭제를 진행했다');
+    assert.strictEqual(p.accessories.length, 1, '액세서리가 사라졌다');
+
+    // 대조군 — 모르는 종류가 없으면 원래대로 정리한다(이 보호가 정리를 영구히 막으면 안 된다)
+    p._unknownTypes = false;
+    p._cleanupStaleAccessories();
+    assert.ok(removed && removed.length === 1, '정상 상황에서 정리가 동작하지 않는다');
+  });
+
   // ⚠️v2.7.0에서 뒤집힌 계약: 'deviceId 없음 = 클라우드 필요'는 더 이상 참이 아니다.
   //   로컬 기기는 부팅 때 기기에게 직접 물어 deviceId를 얻는다. 대조군을 실제로 남는
   //   조건으로 바꾼다 — 기기 IP가 없으면 물어볼 곳이 없다.

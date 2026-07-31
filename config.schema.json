@@ -2,7 +2,7 @@
   "pluginAlias": "SmartThingsKM81",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Samsung 기기(구형 에어컨 / 신형 에어컨 / 세탁기·건조기)를 하나의 플랫폼으로 통합 관리합니다. SmartThings를 사용하는 장치(신형 AC / 세탁기 / 건조기)가 하나라도 있으면 Client ID/Secret/Redirect URI가 필요합니다.",
+  "headerDisplay": "Samsung 기기(구형 에어컨 / 신형 에어컨 / 세탁기·건조기)를 하나의 플랫폼으로 통합 관리합니다. SmartThings를 사용하는 장치(신형·시스템 AC / 세탁기 / 건조기)가 하나라도 있으면 Client ID/Secret/Redirect URI가 필요합니다.",
   "schema": {
     "type": "object",
     "properties": {
@@ -62,6 +62,12 @@
                   ]
                 },
                 {
+                  "title": "시스템 에어컨 (천장형)",
+                  "enum": [
+                    "systemAc"
+                  ]
+                },
+                {
                   "title": "세탁기",
                   "enum": [
                     "washer"
@@ -75,7 +81,7 @@
                 }
               ],
               "required": true,
-              "description": "구형 = 2in1 등 SmartThings 이전 모델(직접 통신). 그 외는 SmartThings 기기."
+              "description": "구형 = 2in1 등 SmartThings 이전 모델(직접 통신). 그 외는 SmartThings 기기. 신형과 시스템 에어컨은 설정 항목이 같습니다."
             },
             "name": {
               "title": "[구형 AC] 액세서리 이름 (필수)",
@@ -320,7 +326,7 @@
               "type": "string"
             },
             "coolModeCommand": {
-              "title": "[신형 AC] 냉방 버튼 → 보낼 모드",
+              "title": "[신형·시스템 AC] 냉방 버튼 → 보낼 모드",
               "type": "string",
               "default": "cool",
               "oneOf": [
@@ -352,7 +358,7 @@
               "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 모드."
             },
             "swingBinding": {
-              "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
+              "title": "[신형·시스템 AC] 스윙(Swing) 토글 ↔ 기능",
               "type": "string",
               "default": "windFree",
               "oneOf": [
@@ -371,7 +377,7 @@
               ]
             },
             "lockBinding": {
-              "title": "[신형 AC] 어린이 보호용 잠금장치 ↔ 기능",
+              "title": "[신형·시스템 AC] 어린이 보호용 잠금장치 ↔ 기능",
               "type": "string",
               "default": "autoClean",
               "oneOf": [
@@ -390,23 +396,23 @@
               ]
             },
             "exposeWindFreeSwitch": {
-              "title": "[신형 AC] 무풍 별도 스위치 노출",
+              "title": "[신형·시스템 AC] 무풍 별도 스위치 노출",
               "type": "boolean",
               "default": false,
               "description": "무풍을 별도 스위치로도 노출합니다."
             },
             "exposeAutoCleanSwitch": {
-              "title": "[신형 AC] 자동건조 별도 스위치 노출",
+              "title": "[신형·시스템 AC] 자동건조 별도 스위치 노출",
               "type": "boolean",
               "default": false,
               "description": "자동건조를 별도 스위치로도 노출합니다."
             },
             "temperatureMin": {
-              "title": "[신형 AC] 목표온도 최소값 (°C)",
+              "title": "[신형·시스템 AC] 목표온도 최소값 (°C)",
               "type": "number"
             },
             "temperatureMax": {
-              "title": "[신형 AC] 목표온도 최대값 (°C)",
+              "title": "[신형·시스템 AC] 목표온도 최대값 (°C)",
               "type": "number"
             },
             "enableNotificationSensor": {
@@ -446,7 +452,7 @@
                 }
               ],
               "condition": {
-                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               },
               "description": "로컬 = 같은 네트워크에서 기기와 직접 통신합니다.",
               "required": true
@@ -492,7 +498,7 @@
               "placeholder": "3ea2a924-ec77-9f1e-8d4f-1900d3f3e791",
               "description": "비워 두면 장치 이름으로 찾거나, 로컬 기기라면 부팅할 때 기기에서 직접 읽습니다. 적어 두면 부팅이 빨라지고 클라우드 조회를 건너뜁니다. 한 번 붙은 뒤 로그의 \"deviceId=…\" 줄에서 복사할 수 있습니다.",
               "condition": {
-                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+                "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
               }
             },
             "powerOnResendStepSec": {
@@ -618,7 +624,7 @@
     "name",
     {
       "type": "fieldset",
-      "title": "SmartThings 인증 (신형 AC / 세탁기 / 건조기 사용 시 필수)",
+      "title": "SmartThings 인증 (신형·시스템 AC / 세탁기 / 건조기 사용 시 필수)",
       "expandable": true,
       "expanded": false,
       "items": [
@@ -735,19 +741,19 @@
         {
           "key": "devices[].deviceLabel",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].deviceId",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].pollingInterval",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
+            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType));"
           }
         },
         {
@@ -796,13 +802,13 @@
             }
           ],
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType);"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType);"
           }
         },
         {
           "key": "devices[].local.host",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
           }
         },
         {
@@ -814,19 +820,19 @@
         {
           "key": "devices[].local.fallbackToCloud",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
           }
         },
         {
           "key": "devices[].model",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].serialNumber",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['legacyAc','smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
@@ -950,7 +956,7 @@
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
@@ -968,7 +974,7 @@
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
@@ -986,19 +992,19 @@
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].resendModeOnPowerOn",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
+            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType));"
           }
         },
         {
           "key": "devices[].resendAutoCleanOnPowerOn",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
+            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType));"
           }
         },
         {
@@ -1011,7 +1017,7 @@
           "key": "devices[].powerOnResendStepSec",
           "type": "number",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || model.devices[arrayIndices[0]].deviceType==='smartAc');"
+            "functionBody": "return model.devices[arrayIndices[0]] && (model.devices[arrayIndices[0]].deviceType==='legacyAc' || ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType));"
           }
         },
         {
@@ -1030,14 +1036,14 @@
           "key": "devices[].exposeWindFreeSwitch",
           "type": "checkbox",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].exposeAutoCleanSwitch",
           "type": "checkbox",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
@@ -1091,13 +1097,13 @@
         {
           "key": "devices[].temperatureMin",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].temperatureMax",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType==='smartAc';"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         }
       ]

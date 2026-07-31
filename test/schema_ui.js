@@ -135,6 +135,26 @@ const condErrors = [...results.values()].flatMap((r) => r.errors);
 check(condErrors.length === 0, `layout 조건식 실행 오류 0건 (실측 ${condErrors.length}건)`);
 condErrors.forEach((e) => console.log(`       ↳ ${e.key}: ${e.error}`));
 
+// ①-2 ★시스템 에어컨은 신형 에어컨과 **완전히 같은 화면**이어야 한다 (v2.8.0)
+//     동작이 같기 때문에 종류만 따로 뒀다. 조건식은 55개가 넘고 그중 하나만 한쪽을
+//     빠뜨려도 필수 항목(IP·장치 이름)이 화면에서 사라지는데, 다른 계약은 전부 통과한다.
+//     ⚠️UI 조건식은 설정을 **저장하기 전에** 평가되므로 정규화(systemAc→smartAc)가 못 구한다.
+{
+  const a = results.get('smartAc');
+  const b = results.get('systemAc');
+  if (!a || !b) {
+    check(false, '시스템 에어컨과 신형 에어컨이 둘 다 선언돼 있다');
+  } else {
+    const only = (x, y) => x.shown.filter((k) => !y.shown.includes(k));
+    const missing = only(a, b);
+    const extra = only(b, a);
+    check(missing.length === 0 && extra.length === 0,
+      `시스템 에어컨 화면 = 신형 에어컨 화면 (신형에만 ${missing.length}개, 시스템에만 ${extra.length}개)`);
+    if (missing.length) console.log(`       ↳ 시스템 에어컨에서 사라진 항목: ${missing.join(', ')}`);
+    if (extra.length) console.log(`       ↳ 시스템 에어컨에만 있는 항목: ${extra.join(', ')}`);
+  }
+}
+
 // ② 세탁기/건조기 화면에 에어컨 전용 필드가 뜨면 안 된다
 for (const t of LAUNDRY_TYPES) {
   const r = results.get(t);

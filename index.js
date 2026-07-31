@@ -51,6 +51,11 @@ const SEC_TO_MS_KEYS = {
 
 function normalizeTimingConfig(device) {
   if (!device || typeof device !== 'object') return device;
+  // 천장형·시스템 에어컨은 설정 목록에서 따로 고를 수 있게 해 두었지만, 동작은 신형
+  // 에어컨과 같다. 온도 리소스 경로가 보드마다 다른 것은 기기에 직접 물어 판별하므로
+  // (lib/local/AcTempChannel.js) 종류로 코드를 가를 이유가 없다. 여기서 한 번 바꿔
+  // 두면 아래 모든 분기가 예전 그대로 동작한다.
+  if (device.deviceType === 'systemAc') device.deviceType = 'smartAc';
   for (const [secKey, msKey] of Object.entries(SEC_TO_MS_KEYS)) {
     const v = device[secKey];
     if (v === undefined || v === null || v === '') continue;
@@ -178,6 +183,22 @@ class SmartThingsKM81Platform {
       this._cleanupStaleAccessories();
       return;
     }
+
+    // ★모르는 기기 종류가 있으면 이번 부팅의 액세서리 정리를 통째로 건너뛴다(v2.8.0).
+    //   아래 필터들이 미지의 종류를 조용히 걸러내므로, 그 기기는 "설정에 없는 것"이 되고
+    //   캐시에 남아 있던 액세서리가 stale로 판정돼 **경고 한 줄 없이 영구 삭제**된다
+    //   (사용자 자동화·방 배치 동반 소실). 오타나, 새 종류를 쓰던 설정을 구버전으로
+    //   되돌린 경우에 실제로 일어난다. 종류를 모를 때는 지우지 않는 것이 안전하다.
+    const KNOWN_TYPES = ['legacyAc', 'smartAc', 'washer', 'dryer'];
+    const unknownTypes = [...new Set(this.devices
+      .filter(d => d && !KNOWN_TYPES.includes(d.deviceType))
+      .map(d => String(d.deviceType)))];
+    if (unknownTypes.length > 0) {
+      this.log.warn(`설정에 모르는 장치 종류가 있습니다: ${unknownTypes.join(', ')} `
+        + `— 이 항목은 건너뛰고, 액세서리 정리도 하지 않습니다(삭제 방지). `
+        + `플러그인 버전과 설정이 맞는지 확인하세요.`);
+    }
+    this._unknownTypes = unknownTypes.length > 0;
 
     // 1) Legacy AC 장치 처리 (SmartThings 불필요)
     const legacyDevices = this.devices.filter(d => d?.deviceType === 'legacyAc');
@@ -842,6 +863,10 @@ class SmartThingsKM81Platform {
   }
 
   _cleanupStaleAccessories() {
+    // ★모르는 종류가 설정에 있으면 어떤 경로로 불려도 지우지 않는다. 그 기기는 필터에
+    //   걸러져 activeUUIDs에 안 들어가므로, 여기서 지우면 곧바로 영구 삭제가 된다.
+    //   (호출 지점이 넷이라 개별로 막지 않고 이 한 곳에서 막는다.)
+    if (this._unknownTypes) return;
     const stale = this.accessories.filter(a => !this.activeUUIDs.has(a.UUID));
     if (stale.length > 0) {
       this.log.info(`${stale.length}개의 오래된 액세서리를 제거합니다.`);
