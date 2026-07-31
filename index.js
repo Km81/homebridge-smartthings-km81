@@ -194,6 +194,9 @@ class SmartThingsKM81Platform {
     //   (사용자 자동화·방 배치 동반 소실). 오타나, 새 종류를 쓰던 설정을 구버전으로
     //   되돌린 경우에 실제로 일어난다. 종류를 모를 때는 지우지 않는 것이 안전하다.
     const KNOWN_TYPES = ['legacyAc', 'smartAc', 'washer', 'dryer'];
+    // 로그에는 **사용자가 고른 이름**을 보여 준다. 정규화된 내부명만 찍으면
+    // "시스템 에어컨을 골랐는지"를 로그로 판별할 수 없어 진단이 막힌다(실사례).
+    this._shownType = (d) => (d && d.__km81SystemAc ? 'systemAc' : d && d.deviceType);
     const unknownTypes = [...new Set(this.devices
       .filter(d => d && !KNOWN_TYPES.includes(d.deviceType))
       .map(d => String(d.deviceType)))];
@@ -500,7 +503,7 @@ class SmartThingsKM81Platform {
       const label = configDevice.deviceLabel || id;
       // ★출처를 구분해 말한다(v2.7.4). 기기에게 물어 얻은 deviceId인데 "config의 deviceId"라고
       //   하면, 바로 앞줄의 `deviceId를 기기에서 확인했습니다`와 모순돼 읽는 사람이 헷갈린다.
-      this.log.info(`'${label}' (${configDevice.deviceType}) — `
+      this.log.info(`'${label}' (${this._shownType(configDevice)}) — `
         + (configDevice.__km81LocalId
           ? '기기에서 확인한 deviceId로 연결 (클라우드 조회 없음)'
           : 'config의 deviceId로 바로 연결 (클라우드 조회 생략)'));
@@ -541,7 +544,7 @@ class SmartThingsKM81Platform {
         }
         const found = matches[0];
         this.smartthings.registerDeviceLabel(found.deviceId, configDevice.deviceLabel); // 로그에 UUID 대신 이름 (v2.1.0)
-        this.log.info(`'${configDevice.deviceLabel}' (${configDevice.deviceType}) HomeKit 추가/갱신`);
+        this.log.info(`'${configDevice.deviceLabel}' (${this._shownType(configDevice)}) HomeKit 추가/갱신`);
         this.log.info(`  ↳ deviceId=${found.deviceId} — config에 적어두면 다음 부팅부터 클라우드 조회를 건너뜁니다`);
         this._bindSmartThingsDevice(found, configDevice);
       }
