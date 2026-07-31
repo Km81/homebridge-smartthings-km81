@@ -55,7 +55,11 @@ function normalizeTimingConfig(device) {
   // 에어컨과 같다. 온도 리소스 경로가 보드마다 다른 것은 기기에 직접 물어 판별하므로
   // (lib/local/AcTempChannel.js) 종류로 코드를 가를 이유가 없다. 여기서 한 번 바꿔
   // 두면 아래 모든 분기가 예전 그대로 동작한다.
-  if (device.deviceType === 'systemAc') device.deviceType = 'smartAc';
+  if (device.deviceType === 'systemAc') {
+    device.deviceType = 'smartAc';
+    // 고른 종류는 남긴다 — 온도 단계(0.5℃)처럼 종류로만 정하는 것이 있다.
+    device.__km81SystemAc = true;
+  }
   for (const [secKey, msKey] of Object.entries(SEC_TO_MS_KEYS)) {
     const v = device[secKey];
     if (v === undefined || v === null || v === '') continue;

@@ -176,6 +176,22 @@ const mkSelf = (overrides = {}) => {
     assert.ok(L.info.some((l) => /로컬 전용으로 동작합니다/.test(l)), '로컬 전용 안내가 없다');
   });
 
+  await t('★시스템 에어컨은 홈킷 온도 단계가 0.5℃다', () => {
+    const { p } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: 'systemAc' }]);
+    const props = require('../lib/accessories/SmartAC')._resolveTempProps({}, p.devices[0]);
+    assert.strictEqual(props.minStep, 0.5, '시스템 에어컨인데 0.5℃가 아니다');
+    assert.strictEqual(props.minValue, 18, '최소값이 바뀌었다');
+    assert.strictEqual(props.maxValue, 30, '최대값이 바뀌었다');
+    // 27.5처럼 0.5 단위 값이 범위 안에서 표현 가능해야 한다
+    assert.ok((27.5 - props.minValue) % props.minStep === 0, '27.5를 만들 수 없다');
+  });
+
+  await t('신형 에어컨은 1℃ 단위 그대로다 (대조군 — 과거 사용자 요청)', () => {
+    const { p } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: 'smartAc' }]);
+    const props = require('../lib/accessories/SmartAC')._resolveTempProps({}, p.devices[0]);
+    assert.strictEqual(props.minStep, 1, '신형 에어컨의 1℃ 고정이 깨졌다');
+  });
+
   await t('다른 기기 종류는 정규화가 건드리지 않는다 (대조군)', () => {
     for (const type of ['legacyAc', 'smartAc', 'washer', 'dryer']) {
       const { p } = mkPlatform([{ ...LOCAL_ONLY[0], deviceType: type }]);
