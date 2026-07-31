@@ -229,5 +229,18 @@ check(legacyCode === legacySchema,
   `구형 냉방 모드: 코드 ↔ 스키마 일치 (코드 ${legacyCode} / 스키마 ${legacySchema})`);
 check(legacyCode === legacyUi, `구형 냉방 모드: 코드 ↔ 화면 titleMap 일치 (화면 ${legacyUi})`);
 
+// ⑨ ★기기를 지목하는 세 항목은 **제목에 필수 여부가 보여야 한다**(v2.7.5 신설).
+//    사용자 지적: "구형은 제목에 (필수)가 있어 이해가 쉬운데 신형은 아무 표시가 없다."
+//    v2.6.11에서 넣었는데 **v2.7.0에서 기능을 추가하며 제목을 다시 쓰다가 날렸고**,
+//    사견 표현은 readme_check가 잡지만 이건 계약이 없어 눈으로만 발견했다.
+//    문구는 바뀔 수 있으니 '필수/비워도/선택' 중 하나가 제목에 있는지만 본다.
+const HINT = /필수|비워도|비워 두|선택/;
+for (const k of ['deviceLabel', 'deviceId']) {
+  const title = (DEVPROPS[k] || {}).title || '';
+  check(HINT.test(title), `'${k}' 제목에 필수 여부 안내가 있다 (현재: ${title || '(없음)'})`);
+}
+const hostTitle = (((DEVPROPS.local || {}).properties || {}).host || {}).title || '';
+check(HINT.test(hostTitle), `'local.host' 제목에 필수 여부 안내가 있다 (현재: ${hostTitle || '(없음)'})`);
+
 console.log(fail.length ? `\n❌ ${fail.length}건 실패` : '\n✅ 전부 통과');
 process.exit(fail.length ? 1 : 0);
