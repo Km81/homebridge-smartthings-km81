@@ -161,6 +161,113 @@ async function hammer(c, makeError, times = 12) {
     check(lines.some(l => /순서 역전 위험/.test(l)), '그때는 사유를 밝힌다');
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // ★★⑦ 브릿지가 실제로 보내는 메시지로 시험한다
+  //
+  // v2.8.0~2.8.2는 이 계약을 손으로 만든 `e.notFound = true`로만 시험했고, 그래서
+  // **프로덕션에서 표식이 한 번도 붙지 않는다**는 것을 22개 테스트가 전부 놓쳤다.
+  // 실제 경로는 이렇다: bridge.py가 2.xx가 아닌 응답을 `{ok:false, code, error}`로
+  // 돌려주고 → `_onMessage`가 그것을 Error로 바꾼다. 그 사이에서 `code`가 버려지고 있었다.
+  // 여기서는 **bridge.py가 만드는 그대로**를 `_onMessage`에 넣는다.
+  // ══════════════════════════════════════════════════════════════════════════
+  const coap = (maj, min) => (maj << 5) | min;
+
+  {
+    const { c } = makeClient();
+    c._proc = { stdin: { write: () => {} } };
+
+    const send = async (code, error) => {
+      const p = c._rpc({ op: 'get', host: '192.168.0.205', port: 49154, path: ['temperature', 'current', '0'] });
+      c._onMessage({ id: c._seq, ok: false, code, error });   // ← bridge.py 형태 그대로
+      try { await p; return null; } catch (e) { return e; }
+    };
+
+    const e404 = await send(coap(4, 4), 'CoAP 4.04 응답');
+    check(e404 !== null && e404.notFound === true,
+      '★★브릿지가 보낸 4.04가 리소스 부재 표식을 달고 도착한다 (이게 없으면 온도 경로 판별 전체가 사문)');
+    check(e404 && e404.code === coap(4, 4), '응답 코드가 보존된다');
+
+    const e403 = await send(coap(4, 3), 'CoAP 4.03 응답');
+    check(e403 && e403.notFound === undefined, '4.03(권한)에는 붙지 않는다');
+    const e500 = await send(coap(5, 0), 'CoAP 5.00 응답');
+    check(e500 && e500.notFound === undefined, '5.00(기기 오류)에는 붙지 않는다');
+
+    const pTimeout = c._rpc({ op: 'post', host: '1.2.3.4', port: 49154, path: ['x'] });
+    c._onMessage({ id: c._seq, ok: false, error: '로컬 브릿지 종료됨', sent: true });
+    let eNoCode = null;
+    try { await pTimeout; } catch (e) { eNoCode = e; }
+    check(eNoCode && eNoCode.notFound === undefined && eNoCode.sent === true,
+      'code가 없는 실패는 예전 그대로 동작한다 (sent 표식 보존)');
+  }
+
+  // ── ⑧ ★온도 경로 판별을 브릿지 메시지로 끝까지 돌려 본다 (천장형 재현)
+  {
+    const { c, lines } = makeClient();
+    const DEV = '11111111-2222-3333-4444-555555555555';
+    c.devices.set(DEV, { host: '192.168.0.205', port: 49154, fallbackToCloud: false, label: '놀이방 에어컨' });
+
+    const VENDOR_REP = {
+      'x.com.samsung.da.items': [{
+        'x.com.samsung.da.id': '0',
+        'x.com.samsung.da.current': '28.5',
+        'x.com.samsung.da.desired': '27.5',
+        'x.com.samsung.da.increment': '0.5',
+      }],
+    };
+    // 천장형처럼 **표준 온도 경로가 없는** 기기를 브릿지 응답 수준에서 흉내 낸다
+    c._proc = { stdin: { write: (line) => {
+      const req = JSON.parse(line);
+      const p = (req.path || []).join('/');
+      setImmediate(() => {
+        if (p === 'oic/d') return c._onMessage({ id: req.id, ok: true, code: coap(2, 5), data: { di: DEV, n: 'Samsung System A/C' }, port: 49154 });
+        if (p === 'temperatures/vs/0') return c._onMessage({ id: req.id, ok: true, code: coap(2, 5), data: VENDOR_REP, port: 49154 });
+        return c._onMessage({ id: req.id, ok: false, code: coap(4, 4), error: 'CoAP 4.04 응답' });
+      });
+    } } };
+
+    // ⚠️수정 전 코드에서는 여기서 예외가 난다. 던지게 두면 나머지 판정이 가려지므로 감싼다.
+    let cur = null;
+    let des = null;
+    try { cur = await c.tempChannel.readCurrent(DEV); } catch (_) { /* 아래에서 잡는다 */ }
+    try { des = await c.tempChannel.readDesired(DEV); } catch (_) { /* 아래에서 잡는다 */ }
+    check(cur === 28.5 && des === 27.5,
+      '★★표준 경로가 없는 기기에서 제조사 경로로 온도를 읽는다 (v2.8.0이 만들어진 이유)');
+    check(c.tempChannel.channelOf(DEV) === 'vendor', '제조사 경로로 굳는다');
+    check(lines.some((l) => /표준 온도 리소스가 없어/.test(l)), '경로가 바뀐 사실을 알린다');
+
+    let sent = null;
+    const origPost = c._post.bind(c);
+    c._post = async (id, segs, payload) => { sent = { segs: segs.join('/'), payload }; return origPost(id, segs, payload); };
+    try { await c.tempChannel.writeDesired(DEV, 27.5); } catch (_) { /* 아래에서 잡는다 */ }
+    check(sent && sent.segs === 'temperatures/vs/0'
+      && sent.payload['x.com.samsung.da.items'][0]['x.com.samsung.da.desired'] === '27.5',
+      '★0.5℃ 단위가 보존된 채 제조사 경로로 나간다');
+  }
+
+  // ── ⑨ 그 기기에서 허위 경보가 나지 않는다 (브릿지 메시지 기준)
+  {
+    const { c, lines } = makeClient();
+    const DEV = '22222222-2222-3333-4444-555555555555';
+    c.devices.set(DEV, { host: '192.168.0.206', port: 49154, fallbackToCloud: false, label: '아가방 에어컨' });
+    c._proc = { stdin: { write: (line) => {
+      const req = JSON.parse(line);
+      const p = (req.path || []).join('/');
+      setImmediate(() => {
+        if (p === 'oic/d') return c._onMessage({ id: req.id, ok: true, code: coap(2, 5), data: { di: DEV }, port: 49154 });
+        return c._onMessage({ id: req.id, ok: false, code: coap(4, 4), error: 'CoAP 4.04 응답' });
+      });
+    } } };
+
+    for (let i = 0; i < 12; i++) {
+      try { await c.getCurrentTemperature(DEV); } catch (_) { /* 리소스가 없다 */ }
+    }
+    check(!lines.some((l) => /포트를 다시 탐지/.test(l)),
+      '★★포트 재탐지가 헛돌지 않는다 (실사용자 로그에서 28회 났던 것)');
+    check(!lines.some((l) => /제어되지 않습니다/.test(l)),
+      '★★「제어되지 않습니다」 허위 경보가 나지 않는다 (NAS 감시기가 잡는 문구)');
+    check((c._fallbackStreak.get(DEV) || 0) === 0, '연속 실패로 세지 않는다');
+  }
+
   console.log(`\n[리소스 부재 ≠ 통신 실패] 통과 ${pass} / 실패 ${fails.length}`);
   for (const f of fails) console.log(`  ✗ ${f}`);
   process.exit(fails.length ? 1 : 0);

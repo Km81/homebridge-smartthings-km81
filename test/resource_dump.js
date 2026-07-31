@@ -28,6 +28,10 @@ const BATCH = [
   { href: '/wirelessinfo/vs/0', rep: { macaddressWiFi: 'AA:BB:CC:DD:EE:FF', macaddressBLE: '11:22:33:44:55:66', connectedApSsid: '우리집공유기' } },
   { href: '/information/vs/0', rep: { 'x.com.samsung.da.modelNum': 'TP1X_DA-AC-CAC-01001_0000', 'x.com.samsung.da.serialNum': 'BNNJP3FL411437A' } },
   { href: '/oic/d', rep: { di: '3ea2a924-1111-2222-3333-444455556666', n: 'Samsung System A/C' } },
+  // ★같은 값이 **다른 이름으로 다시** 나온다 — 실기기 덤프에서 확인된 키들.
+  { href: '/subdevices/vs/0', rep: { 'x.com.samsung.da.subdeviceIdList': ['6c2dff6d-ee5c-dad1-6a5e-000000000001'] } },
+  { href: '/personality/presence/vs/0', rep: { 'x.com.samsung.da.deviceId': '3ea2a924-1111-2222-3333-444455556666' } },
+  { href: '/otninformation/vs/0', rep: { 'x.com.samsung.da.otnDUID': 'DUID-ABCDEF0123456789' } },
 ];
 
 function makeClient(rpcImpl) {
@@ -51,7 +55,7 @@ function makeClient(rpcImpl) {
     const { c, lines } = makeClient(async () => ({ code: 69, data: BATCH, port: 49154 }));
     await c._dumpResourcesOnce('D');
     const joined = lines.join('\n');
-    check(/기기 기능 목록 6개/.test(joined), '리소스 개수와 함께 목록을 연다');
+    check(/기기 기능 목록 9개/.test(joined), '리소스 개수와 함께 목록을 연다');
     check(/기능 목록 끝/.test(joined), '목록의 끝을 표시한다 (로그에서 잘라내기 쉽게)');
     check(/\/temperatures\/vs\/0/.test(joined), '리소스 경로가 그대로 남는다');
     check(/29\.0/.test(joined) && /0\.5/.test(joined),
@@ -76,6 +80,15 @@ function makeClient(rpcImpl) {
       '어떤 항목이 있는지는 남는다 (가리는 것은 값뿐)');
     check(/TP1X_DA-AC-CAC-01001_0000/.test(joined),
       '모델명은 남긴다 — 진단에 필요하고 개인정보가 아니다');
+
+    // ★같은 식별자가 다른 키 이름으로 재등장한다 — 정규식이 이름별로 다 잡아야 한다
+    check(!joined.includes('6c2dff6d-ee5c-dad1-6a5e-000000000001'),
+      '★하위기기 UUID(subdeviceIdList)가 평문으로 나가지 않는다 (2in1 실기기에 있다)');
+    check(!joined.includes('DUID-ABCDEF0123456789'),
+      '★펌웨어 고유 식별자(otnDUID)가 평문으로 나가지 않는다');
+    const diCount = (joined.match(/3ea2a924-1111-2222-3333-444455556666/g) || []).length;
+    check(diCount === 0,
+      '★기기 고유 ID는 di로 나오든 deviceId로 나오든 전부 가려진다');
   }
 
   // ── ③ 부팅당 기기당 한 번만
