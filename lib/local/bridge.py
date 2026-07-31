@@ -111,8 +111,19 @@ def mint_cert(ca_pem_path, out_chain, out_key):
 
     raw = open(ca_pem_path, "rb").read()
     ca_key = serialization.load_pem_private_key(raw, password=None)
-    ca_certs = [x509.load_pem_x509_certificate(b"-----BEGIN CERTIFICATE-----" + p)
-                for p in raw.split(b"-----BEGIN CERTIFICATE-----")[1:]]
+    # ★삼성 CA 인증서는 시리얼 번호가 음수/0이라 cryptography가 경고를 낸다.
+    #   우리가 바꿀 수 없는 남의 인증서이고 동작에도 지장이 없는데, 그 경고가 stderr로 나가
+    #   **첫 설치자에게 경고 한 줄로 보였다**(v2.7.5). 여기서 잡아 debug로 내린다.
+    #   ⚠️문구가 "미래 릴리스에서는 예외가 된다"고 말한다 — 그날이 오면 발급이 통째로 깨진다.
+    #   숨기되 잊지는 않기 위해 debug로 남기고 TROUBLESHOOTING에 적어 둔다.
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ca_certs = [x509.load_pem_x509_certificate(b"-----BEGIN CERTIFICATE-----" + p)
+                    for p in raw.split(b"-----BEGIN CERTIFICATE-----")[1:]]
+    for w in caught:
+        first_line = str(w.message).splitlines()[0] if str(w.message) else ""
+        log("CA 인증서 경고(동작 무관): %s" % first_line[:120], "debug")
     ca_cert = next((c for c in ca_certs
                     if "AC14K_M" in c.subject.rfc4514_string()), ca_certs[0])
 
