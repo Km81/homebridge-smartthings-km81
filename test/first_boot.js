@@ -193,12 +193,18 @@ const mkSelf = (overrides = {}) => {
     const L = { info: [], warn: [] };
     const self = {
       log: { info: (m) => L.info.push(String(m)), warn: (m) => L.warn.push(String(m)),
-        error: () => {}, debug: () => {} },
+        error: (m) => L.warn.push(String(m)), debug: () => {} },
       localClient: {
         readDiscovered: () => cached || null,
         writeDiscovered: (h, r) => { L.wrote = { h, ...r }; },
         probeIdentity: probe,
       },
+      // ★내부 헬퍼는 **진짜 구현**을 붙인다 — 스텁으로 대체하면 계약이 빈 껍데기가 된다.
+      _probeOne: Platform.prototype._probeOne,
+      _scheduleLocalIdRetry: () => { L.retryScheduled = true; },
+      registerShutdown: () => {},
+      _bindSmartThingsDevice: () => {},
+      _cleanupStaleAccessories: () => {},
     };
     const devs = IP_ONLY();
     const ok = await Platform.prototype._resolveLocalDeviceIds.call(self, devs);
@@ -232,7 +238,44 @@ const mkSelf = (overrides = {}) => {
     const r = await runResolve({ probe: async () => { throw new Error('무응답'); } });
     assert.strictEqual(r.ok, false, 'true를 돌려주면 캐시 액세서리가 삭제된다');
     assert.strictEqual(r.devs[0].deviceId, undefined);
-    assert.ok(r.L.warn.some((l) => /deviceId를 읽지 못해/.test(l)), '실패를 알리지 않는다');
+    assert.ok(r.L.warn.some((l) => /아직 확인하지 못했습니다/.test(l)), '실패를 알리지 않는다');
+  });
+
+  // ★★v2.7.2 — 첫 설치는 pip이 수 분이라 이 시점에 브릿지가 아직 안 떠 있다.
+  // 재시도가 없으면 IP만 적은 기기가 첫 부팅에 한 대도 안 붙는다(v2.7.1까지의 상태).
+  await t('★조회에 실패하면 재시도를 예약한다 (첫 부팅에 0대 붙던 결함)', async () => {
+    const r = await runResolve({ probe: async () => { throw new Error('로컬 브릿지 미준비'); } });
+    assert.strictEqual(r.L.retryScheduled, true, '재시도를 예약하지 않아 영영 안 붙는다');
+  });
+
+  await t('원인이 브릿지면 기기·IP를 지목하지 않는다', async () => {
+    const r = await runResolve({ probe: async () => { throw new Error('로컬 브릿지 미준비'); } });
+    assert.ok(r.L.warn.some((l) => /브릿지가 준비되면 자동으로 다시 시도/.test(l)),
+      '브릿지 문제인데 기기·IP를 확인하라고 한다');
+  });
+
+  await t('원인이 기기면 기기·IP를 지목한다 (대조군)', async () => {
+    const r = await runResolve({ probe: async () => { throw new Error('로컬 요청 시간 초과'); } });
+    assert.ok(r.L.warn.some((l) => /기기 전원과 IP를 확인하세요/.test(l)));
+  });
+
+  await t('★기기가 알려준 이름을 라벨로 쓴다 (비우면 홈킷 이름이 UUID가 된다)', async () => {
+    const r = await runResolve({ probe: async () => ({ deviceId: DI, name: 'Samsung Window A/C' }) });
+    // 라벨을 비운 구성에서만 채운다
+    const L2 = { info: [], warn: [] };
+    const devs = [{ deviceType: 'smartAc', transport: 'local',
+      local: { host: '10.0.0.9', fallbackToCloud: false } }];
+    const self2 = {
+      log: { info: (m) => L2.info.push(String(m)), warn: () => {}, error: () => {}, debug: () => {} },
+      localClient: { readDiscovered: () => null, writeDiscovered: () => {},
+        probeIdentity: async () => ({ deviceId: DI, name: 'Samsung Window A/C' }) },
+      _probeOne: Platform.prototype._probeOne,
+      _scheduleLocalIdRetry: () => {}, registerShutdown: () => {},
+      _bindSmartThingsDevice: () => {}, _cleanupStaleAccessories: () => {},
+    };
+    await Platform.prototype._resolveLocalDeviceIds.call(self2, devs);
+    assert.strictEqual(devs[0].deviceLabel, 'Samsung Window A/C', '이름을 받아 놓고 버렸다');
+    assert.ok(r.devs[0].deviceId === DI);
   });
 
   await t('IP만 적은 완전 로컬 구성도 OAuth 항목을 요구하지 않는다', () => {

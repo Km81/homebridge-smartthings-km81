@@ -16,6 +16,13 @@ const PLATFORM_NAME = 'SmartThingsKM81';
 const PLUGIN_NAME = 'homebridge-smartthings-km81';
 const PACKAGE_ROOT = __dirname;
 
+// 로컬 deviceId 확인 예산·재시도 (v2.7.2).
+// 첫 설치는 pip이 최대 180초라 기동 예산(20초) 직후에는 브릿지가 아직 안 떠 있다.
+// 그래서 "한 번 실패하면 끝"이 아니라 준비될 때까지 몇 번 더 물어본다.
+const LOCAL_ID_BUDGET_MS = 15000;   // 전체 조회 상한 (기기별이 아니라 합계)
+const LOCAL_ID_RETRY_MS = 30000;    // 재시도 간격
+const LOCAL_ID_RETRY_MAX = 12;      // 최대 6분 — pip 180초 + 인증서 발급을 넉넉히 덮는다
+
 // 로그에 쓸 기기 이름. deviceLabel이 비어 있어도(deviceId만 적은 구성은 정상 지원된다)
 // `[undefined]`가 찍히지 않도록 폴백을 둔다 — 오늘 `undefined GET 오류`와 같은 부류.
 const labelOf = (d) => (d && (d.deviceLabel || d.name || d.deviceId || d.deviceType)) || '기기';
@@ -309,30 +316,95 @@ class SmartThingsKM81Platform {
       && d.transport === 'local' && d.local?.host && !d.local?.token);
     if (need.length === 0 || !this.localClient) return true;
 
-    let allResolved = true;
-    for (const d of need) {
-      const host = d.local.host;
-      const label = labelOf(d);
-
-      const cached = this.localClient.readDiscovered(host);
-      if (cached?.deviceId) {
-        d.deviceId = cached.deviceId;
-        this.log.debug?.(`[${label}] deviceId를 캐시에서 읽음 (${host})`);
-        continue;
-      }
-
-      try {
-        const found = await this.localClient.probeIdentity(host, d.local.port, d.local.localPort);
-        d.deviceId = found.deviceId;
-        this.localClient.writeDiscovered(host, found);
-        this.log.info(`[${label}] deviceId를 기기에서 확인했습니다 — ${found.name || host}`);
-      } catch (e) {
-        allResolved = false;
-        this.log.warn(`[${label}] ${host}에서 deviceId를 읽지 못해 이번 부팅에서는 건너뜁니다 `
-          + `— 기기 전원과 IP를 확인하세요: ${e.message}`);
-      }
+    // ★기기마다 20초씩 직렬로 기다리면 안 된다(v2.7.2).
+    //   바로 위에서 브릿지 기동에 20초 예산을 둔 이유가 "여기서 오래 붙들리면 무성 유실"인데,
+    //   이 단계가 무제한이면 그 보호가 무의미해진다. 실측: 무응답 2대면 +40초, 그동안
+    //   **조회가 필요 없는 클라우드 기기까지** 바인딩이 밀렸다.
+    //   병렬로 돌리고 전체에 예산을 씌운다.
+    const results = await Promise.race([
+      Promise.allSettled(need.map((d) => this._probeOne(d))),
+      new Promise((resolve) => setTimeout(() => resolve(null), LOCAL_ID_BUDGET_MS)),
+    ]);
+    if (results === null) {
+      this.log.warn(`로컬 deviceId 확인이 ${LOCAL_ID_BUDGET_MS / 1000}초를 넘겨 이번 부팅에서는 넘어갑니다 `
+        + '— 기기가 켜져 있고 IP가 맞는지 확인하세요. 다음 재시도는 브릿지가 준비되면 자동으로 합니다.');
     }
-    return allResolved;
+
+    const unresolved = need.filter((d) => !d.deviceId);
+    if (unresolved.length === 0) return true;
+
+    // ★브릿지가 아직 안 떴을 뿐이면 **다시 시도한다**(v2.7.2).
+    //   pip 첫 설치는 최대 180초인데 이 함수는 20초 예산 직후 한 번만 불린다 —
+    //   즉 **성공하는 첫 설치도** 반드시 미준비 상태로 여기를 지난다. v2.7.1까지는
+    //   재시도 경로가 없어 IP만 적은 기기가 첫 부팅에 한 대도 안 붙었고, 로그는
+    //   "저절로 전환됩니다"라고 말해 유일한 복구 수단(재시작)까지 막았다.
+    this._scheduleLocalIdRetry(unresolved);
+    return false;
+  }
+
+  /** 기기 한 대의 deviceId를 캐시 또는 기기 질의로 정한다. 이름도 함께 받아 라벨을 채운다. */
+  async _probeOne(d) {
+    const host = d.local.host;
+    const label = labelOf(d);
+    const cached = this.localClient.readDiscovered(host);
+    if (cached?.deviceId) {
+      d.deviceId = cached.deviceId;
+      // ★이름도 캐시에서 되살린다 — 라벨을 비우면 홈킷 이름과 전 로그가 36자 UUID가 된다.
+      if (!d.deviceLabel && cached.name) d.deviceLabel = cached.name;
+      this.log.debug?.(`[${label}] deviceId를 캐시에서 읽음 (${host})`);
+      return;
+    }
+    try {
+      const found = await this.localClient.probeIdentity(host, d.local.port, d.local.localPort);
+      d.deviceId = found.deviceId;
+      // ★기기가 알려준 이름을 **쓴다**(v2.7.2). v2.7.0은 로그에만 쓰고 버려서,
+      //   문서가 권장하는 '이름 비우기' 구성에서 홈 앱 이름이 UUID가 됐다.
+      if (!d.deviceLabel && found.name) d.deviceLabel = found.name;
+      this.localClient.writeDiscovered(host, found);
+      this.log.info(`[${labelOf(d)}] deviceId를 기기에서 확인했습니다 — ${found.name || host}`);
+    } catch (e) {
+      // 원인이 브릿지면 기기·IP를 지목하지 않는다 — 엉뚱한 곳을 보게 만든다.
+      const bridgeNotReady = /브릿지|미준비/.test(e.message || '');
+      this.log.warn(`[${label}] ${host}의 deviceId를 아직 확인하지 못했습니다 — `
+        + (bridgeNotReady
+          ? `로컬 브릿지가 준비되면 자동으로 다시 시도합니다: ${e.message}`
+          : `기기 전원과 IP를 확인하세요: ${e.message}`));
+      throw e;
+    }
+  }
+
+  /**
+   * 브릿지가 준비되면 남은 기기의 deviceId를 다시 확인하고 바인딩한다.
+   * 첫 설치(pip 수 분)에서 이 경로가 없으면 액세서리가 한 대도 안 만들어진다.
+   */
+  _scheduleLocalIdRetry(pending, attempt = 1) {
+    if (this._stopped || attempt > LOCAL_ID_RETRY_MAX) {
+      if (attempt > LOCAL_ID_RETRY_MAX) {
+        this.log.error(`로컬 deviceId 확인을 ${LOCAL_ID_RETRY_MAX}회 시도했지만 실패했습니다 — `
+          + '기기 전원·IP·파이썬 의존성 설치 로그를 확인한 뒤 홈브릿지를 재시작하세요.');
+      }
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const still = pending.filter((d) => !d.deviceId);
+      if (still.length === 0) return;
+      const done = [];
+      await Promise.allSettled(still.map(async (d) => {
+        try { await this._probeOne(d); done.push(d); } catch (_) { /* 다음 회차 */ }
+      }));
+      for (const d of done) {
+        this.log.info(`[${labelOf(d)}] 준비가 끝나 지금 연결합니다.`);
+        this._bindSmartThingsDevice({ deviceId: d.deviceId, label: labelOf(d) }, d);
+      }
+      const left = pending.filter((x) => !x.deviceId);
+      if (left.length === 0) {
+        this._cleanupStaleAccessories();   // 이제야 전체 목록이 확정됐다
+        return;
+      }
+      this._scheduleLocalIdRetry(left, attempt + 1);
+    }, LOCAL_ID_RETRY_MS);
+    if (timer.unref) timer.unref();
+    this.registerShutdown(() => clearTimeout(timer));
   }
 
   // v2.3.0 — config에 deviceId가 있으면 클라우드 조회를 건너뛰고 바로 바인딩한다.
@@ -718,6 +790,7 @@ class SmartThingsKM81Platform {
   }
 
   _shutdown() {
+    this._stopped = true;   // 진행 중인 deviceId 재시도를 더 예약하지 않는다
     this.log.info('플랫폼 종료 신호 수신, 리소스를 정리합니다.');
     for (const fn of this.shutdownHandlers) {
       try { fn(); } catch (e) { this.log.warn('Shutdown 핸들러 오류:', e.message); }
