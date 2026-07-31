@@ -259,22 +259,30 @@ class SmartThingsKM81Platform {
     // 모든 기기에 적어두면 부팅에도 SmartThings API를 한 번도 쓰지 않는다.
     const needDiscovery = this._bindByConfiguredIds(stDevices);
 
-    let stDiscoverySucceeded = needDiscovery.length === 0 && localIdOk;
+    // ⛔★정리 억제 신호는 **둘 다** 살아 있어야 한다(v2.7.1).
+    //   v2.7.0은 아래 클라우드 조회 결과를 `stDiscoverySucceeded`에 **그대로 대입**해서
+    //   `localIdOk`(로컬 deviceId 조회 실패)를 삼켰다. 그러면 로컬 기기가 응답하지 않은
+    //   부팅에서 그 액세서리가 stale로 판정돼 **영구 삭제**된다 —
+    //   사용자의 자동화·방 배치·종료 알림 센서가 함께 사라진다.
+    //   두 신호는 원인이 다르므로 절대 한쪽이 다른 쪽을 덮어쓰면 안 된다.
+    let cloudOk = needDiscovery.length === 0;
     if (stDevices.length > 0 && this.smartthings) {
       if (!hasToken) {
         this.oauthServer.start(async () => {
           const ok = await this._discoverAndBindSmartThings(needDiscovery);
-          if (ok) this._cleanupStaleAccessories();
+          if (ok && localIdOk) this._cleanupStaleAccessories();
         });
       } else if (needDiscovery.length > 0) {
-        stDiscoverySucceeded = await this._discoverAndBindSmartThings(needDiscovery);
+        cloudOk = await this._discoverAndBindSmartThings(needDiscovery);
       }
     }
 
-    // SmartThings 검색이 실패/빈 결과였다면 stale cleanup을 건너뛴다.
+    // 검색이 실패/빈 결과였다면 stale cleanup을 건너뛴다.
     // — 일시 장애 시 사용자의 알림 센서·자동화·방 배치가 영구 삭제되는 것을 막기 위함.
-    if (stDiscoverySucceeded) {
+    if (cloudOk && localIdOk) {
       this._cleanupStaleAccessories();
+    } else if (!localIdOk) {
+      this.log.warn('일부 로컬 기기의 deviceId를 확인하지 못해, 오래된 액세서리 정리를 건너뜁니다. (자동화 보호)');
     } else {
       this.log.warn('SmartThings 장치 검색이 실패하거나 비어 있어, 오래된 액세서리 정리를 건너뜁니다. (자동화 보호)');
     }

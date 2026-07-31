@@ -248,6 +248,68 @@ const mkSelf = (overrides = {}) => {
     assert.ok(L.error.some((l) => /clientId/.test(l)), '8888 기기는 di를 못 읽는데 요구하지 않았다');
   });
 
+  // ⛔★v2.7.1 — 정리 억제 신호가 서로를 덮어쓰면 사용자 액세서리가 영구 삭제된다.
+  // v2.7.0은 클라우드 조회 결과를 stDiscoverySucceeded에 그대로 대입해 localIdOk를 삼켰다.
+  // 로컬 기기가 응답 없는 부팅 + 다른 기기의 클라우드 조회 성공이 겹치면 정리가 돌아
+  // 자동화·방 배치·종료 알림 센서가 함께 사라진다.
+  console.log('\n[stale 정리 억제 — 두 신호 독립성]');
+
+  const runLaunch = async ({ localIdOk, cloudOk, hasCloud = true }) => {
+    const L = { warn: [], info: [] };
+    let cleaned = false;
+    const self = {
+      log: { info: (m) => L.info.push(String(m)), warn: (m) => L.warn.push(String(m)),
+        error: () => {}, debug: () => {} },
+      api: { user: { storagePath: () => require('os').tmpdir() } },
+      config: {}, accessories: [], mqtt: { enabled: false },
+      devices: [
+        { deviceType: 'smartAc', deviceLabel: 'IP만', transport: 'local',
+          local: { host: '10.0.0.9', fallbackToCloud: false } },
+        { deviceType: 'dryer', deviceLabel: '클라우드 기기' },
+      ],
+      smartthings: hasCloud ? { init: async () => true } : null,
+      registerShutdown: () => {},
+      _resolveLocalDeviceIds: async () => localIdOk,
+      _bindByConfiguredIds: () => [{ deviceType: 'dryer', deviceLabel: '클라우드 기기' }],
+      _discoverAndBindSmartThings: async () => cloudOk,
+      _cleanupStaleAccessories: () => { cleaned = true; },
+      _startCloudKeepalive: () => {},
+    };
+    await Platform.prototype._didFinishLaunching.call(self);
+    return { cleaned, L };
+  };
+
+  await t('★로컬 조회가 실패하면 클라우드 조회가 성공해도 정리하지 않는다', async () => {
+    const r = await runLaunch({ localIdOk: false, cloudOk: true });
+    assert.strictEqual(r.cleaned, false,
+      '액세서리를 삭제했다 — 사용자 자동화·방 배치가 영구 소실된다');
+    assert.ok(r.L.warn.some((l) => /로컬 기기의 deviceId를 확인하지 못해/.test(l)),
+      '억제 사유가 로컬 조회 실패임을 알리지 않는다');
+  });
+
+  await t('클라우드 조회가 실패하면 로컬이 성공해도 정리하지 않는다 (대조군)', async () => {
+    const r = await runLaunch({ localIdOk: true, cloudOk: false });
+    assert.strictEqual(r.cleaned, false);
+    assert.ok(r.L.warn.some((l) => /SmartThings 장치 검색이 실패/.test(l)));
+  });
+
+  await t('둘 다 성공하면 정리한다 (대조군 — 억제를 너무 넓히지 않았는지)', async () => {
+    const r = await runLaunch({ localIdOk: true, cloudOk: true });
+    assert.strictEqual(r.cleaned, true, '정상 상황인데 정리를 건너뛰면 고아 액세서리가 쌓인다');
+  });
+
+  // ★v2.7.1 — pip 재설치가 실제로 파일을 바꾸는가
+  console.log('\n[pip 재설치 — --upgrade]');
+
+  await t('★pip 인자에 --upgrade가 있다 (없으면 재설치가 무동작인데 성공으로 기록된다)', () => {
+    const src = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'), 'utf8');
+    const m = src.match(/'-m',\s*'pip',\s*'install',([\s\S]{0,80}?)this\.libDir/);
+    assert.ok(m, 'pip 호출부를 찾지 못했다');
+    assert.ok(/--upgrade/.test(m[1]),
+      "--upgrade가 없다 — 파일이 이미 있으면 pip이 건너뛰고 exit 0을 주는데 우리는 성공으로 판정한다");
+  });
+
   console.log(`\n  총 ${pass + fail.length}건 / 실패 ${fail.length}\n`);
   process.exit(fail.length ? 1 : 0);
 })();
