@@ -51,7 +51,7 @@ const SEC_TO_MS_KEYS = {
 
 function normalizeTimingConfig(device) {
   if (!device || typeof device !== 'object') return device;
-  // 천장형·시스템 에어컨은 설정 목록에서 따로 고를 수 있게 해 두었지만, 동작은 신형
+  // 시스템 에어컨은 설정 목록에서 따로 고를 수 있게 해 두었지만, 동작은 신형
   // 에어컨과 같다. 온도 리소스 경로가 보드마다 다른 것은 기기에 직접 물어 판별하므로
   // (lib/local/AcTempChannel.js) 종류로 코드를 가를 이유가 없다. 여기서 한 번 바꿔
   // 두면 아래 모든 분기가 예전 그대로 동작한다.
