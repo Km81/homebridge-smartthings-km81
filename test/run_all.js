@@ -37,6 +37,9 @@ const SUITES = [
   { file: 'resource_dump.js' },
   // v2.9.0 — 스윙 토글에 바람방향을 묶는다(구형과 대칭). 클라우드 미지원이라 로컬 전용.
   { file: 'wind_direction.js' },
+  // v2.10.1 — ★접합부. wind_direction 은 고립 단위만 재서 적대 리뷰 8건을 하나도 못 잡았다.
+  //           여기서는 폴 라운드·무풍 공유·MQTT 중계·클라우드 클라이언트가 만나는 지점을 밟는다.
+  { file: 'wind_seams.js' },
   // v2.6.10 — 첫 부팅(의존성 설치 중) 경로. LocalApplianceClient를 스텁으로 갈아끼우므로
   //           진짜 클라이언트를 쓰는 스위트와 반드시 별도 프로세스여야 한다.
   { file: 'first_boot.js' },

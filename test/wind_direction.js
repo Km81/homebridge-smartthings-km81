@@ -77,7 +77,8 @@ function makeClient(current = 'Fix') {
   // ── ③ ★클라우드로는 조용히 성공한 척하지 않는다
   {
     const { c, DEV } = makeClient('Fix');
-    c.cloud = { anything: () => true };
+    let cloudCalled = 0;
+    c.cloud = { anything: () => { cloudCalled++; return true; } };
     c.devices.get(DEV).fallbackToCloud = true;
     // 로컬을 실패시킨다 (기기가 그 리소스를 갖고 있지 않은 경우)
     c._proc = { stdin: { write: (line) => {
@@ -92,8 +93,11 @@ function makeClient(current = 'Fix') {
     let err = null;
     try { await c.setWindDirection(DEV, 'All'); } catch (e) { err = e; }
     check(err !== null, '★실패를 삼키지 않는다 (삼키면 홈킷 토글이 거짓말을 한다)');
-    check(/클라우드로 제어할 수 없습니다/.test(err?.message || ''),
-      '왜 안 되는지 알려 준다 (클라우드 미지원)');
+    // ★v2.10.1 — 폴백 함수를 아예 주지 않는다. '항상 던지는 스텁'을 주면 `_withFallback`이
+    //   그걸 클라우드 호출로 여겨 **매 폴마다 실행**하고, 그 예외가 폴 라운드 전체를 죽였다
+    //   (적대 리뷰 H2). 그래서 여기서 재야 할 것은 문구가 아니라 **클라우드를 안 부른다**는 사실이다.
+    check(cloudCalled === 0, '★클라우드를 부르지 않는다 (대응 기능이 없으므로)');
+    check(/CoAP|바람방향/.test(err?.message || ''), '실패 이유가 로컬 오류 그대로 올라온다');
   }
 
   // ── ④ 값이 비면 던진다
@@ -164,6 +168,12 @@ function makeClient(current = 'Fix') {
       o._label = '승준 에어컨';
       o._state = {};
       o._offIntentTs = 0;
+      // v2.10.1 — 미지원 차단이 이제 표시를 실제 상태로 되돌린다(적대 리뷰 M4).
+      // 스텁도 그 계약을 받아야 한다.
+      o._resyncTimers = new Map();
+      o._stateSeq = new Map();
+      o._warnedNoRotate = false;
+      o._scheduleResync = () => { o._resyncCalls = (o._resyncCalls || 0) + 1; };
       o._mainService = { testCharacteristic: () => true, updateCharacteristic: () => {} };
       o.smartthings = {
         getSupportedWindDirections: async () => supported,
@@ -207,6 +217,7 @@ function makeClient(current = 'Fix') {
       o.log = { warn: (m) => lines.push(`warn|${m}`), info: (m) => lines.push(`info|${m}`), debug: () => {} };
       o._label = '기기';
       o._swingBinding = binding;
+      o._warnedNoRotate = false;   // v2.10.1 — 회전 불가 경고는 별도 플래그를 쓴다
       o.smartthings = { getSupportedWindDirections: async () => supported };
       return { o, lines };
     };
