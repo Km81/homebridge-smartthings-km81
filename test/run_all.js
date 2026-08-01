@@ -35,6 +35,8 @@ const SUITES = [
   { file: 'notfound_not_failure.js' },
   // v2.8.2 — 기기 기능 목록 덤프. ★핵심은 가림 처리다 — 사용자가 이 로그를 그대로 보낸다.
   { file: 'resource_dump.js' },
+  // v2.9.0 — 스윙 토글에 바람방향을 묶는다(구형과 대칭). 클라우드 미지원이라 로컬 전용.
+  { file: 'wind_direction.js' },
   // v2.6.10 — 첫 부팅(의존성 설치 중) 경로. LocalApplianceClient를 스텁으로 갈아끼우므로
   //           진짜 클라이언트를 쓰는 스위트와 반드시 별도 프로세스여야 한다.
   { file: 'first_boot.js' },
