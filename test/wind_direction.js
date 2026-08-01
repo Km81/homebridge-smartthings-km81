@@ -118,21 +118,30 @@ function makeClient(current = 'Fix') {
       '지원 목록을 못 읽으면 빈 배열 (이것 때문에 제어가 막히면 안 된다)');
   }
 
-  // ── ⑥ 설정 화면 계약 — 구형과 같은 선택지를 신형·시스템에도 준다
+  // ── ⑥ 설정 화면 계약 — 드롭다운 하나로 끝난다
   {
-    const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
+    const SmartAC = require("../lib/accessories/SmartAC");
+    const schema = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "config.schema.json"), "utf8"));
     const props = schema.schema.properties.devices.items.properties;
-    const legacy = (props.legacySwingBinding.oneOf || []).map((o) => o.enum[0]);
+
+    check(props.swingWindDirection === undefined,
+      "★두 번째 드롭다운은 없다 (스윙 토글 하나로 끝낸다)");
+
+    const legacy = (props.legacySwingBinding.oneOf || []).map((o) => o.title);
+    check(JSON.stringify(legacy) === JSON.stringify(["무풍", "회전", "사용 안 함"]),
+      `구형은 무풍/회전/사용 안 함 (현재: ${legacy.join("/")})`);
+
     const modern = (props.swingBinding.oneOf || []).map((o) => o.enum[0]);
-    check(modern.includes('windDirection'), '신형·시스템 스윙 토글에 상하 바람이 있다');
-    check(legacy.length === modern.length,
-      `구형과 선택지 개수가 같다 (구형 ${legacy.length} / 신형 ${modern.length})`);
-    const dirs = (props.swingWindDirection.oneOf || []).map((o) => o.enum[0]);
-    check(dirs.every((d) => SUPPORTED.includes(d)),
-      '고를 수 있는 방향이 전부 기기 규격 안의 값이다');
-    check(!dirs.includes('Fix'),
-      "끄기 전용인 '고정'은 켤 때 보낼 방향 목록에 없다");
-    check(props.swingWindDirection.default === 'Up_And_Low', '기본은 상하');
+    check(modern[0] === "windFree" && modern[modern.length - 1] === "none",
+      "신형·시스템 목록은 무풍으로 시작하고 사용 안 함으로 끝난다");
+    const dirs = modern.filter((v) => v !== "windFree" && v !== "none");
+    check(JSON.stringify(dirs.slice().sort()) === JSON.stringify(SmartAC.SWING_DIRECTIONS.slice().sort()),
+      "★스키마 선택지와 코드 상수가 일치한다 (어긋나면 고른 값이 조용히 무시된다)");
+    check(dirs.filter((d) => d !== "rotate").every((d) => SUPPORTED.includes(d)),
+      "방향 값이 전부 기기 규격 안의 값이다");
+    check(!dirs.includes("Fix"), "끄기 전용인 고정은 선택지에 없다");
+    check(SmartAC.ROTATE_PREFERENCE.every((m) => SUPPORTED.includes(m) && m !== "Fix"),
+      "회전 우선순위가 전부 유효한 방향이다");
   }
 
   // ── ⑦ ★기기가 지원하지 않는 방향을 조용히 보내지 않는다
@@ -181,6 +190,56 @@ function makeClient(current = 'Fix') {
     await c2.o._setWindDirection('D', 'Fix');
     check(c2.sent.length === 1 && c2.sent[0] === 'Fix',
       '★끄기(고정)는 지원 목록을 못 읽어도 보낸다 (끄기를 막으면 안 된다)');
+  }
+
+  // ── ⑧ ★`회전` — 기기가 지원하는 방향을 스스로 고른다
+  //   기기마다 다르기 때문이다(실측: 승준 에어컨은 좌우만, 천장형은 네 방향 전부).
+  {
+    const SmartAC = require('../lib/accessories/SmartAC');
+    const mk = (supported, binding = 'rotate') => {
+      const lines = [];
+      const o = Object.create(SmartAC.prototype);
+      o.log = { warn: (m) => lines.push(`warn|${m}`), info: (m) => lines.push(`info|${m}`), debug: () => {} };
+      o._label = '기기';
+      o._swingBinding = binding;
+      o.smartthings = { getSupportedWindDirections: async () => supported };
+      return { o, lines };
+    };
+
+    const seungjun = mk(['Fix', 'Left_And_Right']);          // 승준 에어컨 실측
+    check(await seungjun.o._resolveSwingDirection('D') === 'Left_And_Right',
+      '★좌우만 지원하는 기기는 좌우를 고른다 (승준 에어컨 실측 구성)');
+    check(seungjun.lines.some((l) => /스윙 회전 방향 = Left_And_Right/.test(l)),
+      '무엇을 골랐는지 로그에 남긴다');
+
+    const cac = mk(['Up_And_Low', 'Fix', 'Left_And_Right', 'All']);   // 천장형 실측
+    check(await cac.o._resolveSwingDirection('D') === 'Up_And_Low',
+      '네 방향을 다 지원하면 상하를 고른다');
+
+    const odd = mk(['Fix', 'All']);
+    check(await odd.o._resolveSwingDirection('D') === 'All',
+      '우선순위에 없어도 고정이 아닌 값이 있으면 그것을 쓴다');
+
+    const nothing = mk(['Fix']);
+    check(await nothing.o._resolveSwingDirection('D') === null,
+      '회전할 수 있는 방향이 없으면 아무것도 보내지 않는다');
+    check(nothing.lines.some((l) => /회전할 수 있는 바람방향이 없습니다/.test(l)),
+      '그 사실을 알리고 무엇으로 바꾸라고 말해 준다');
+
+    // 방향을 콕 집었으면 기기에 묻지 않는다
+    let asked = 0;
+    const fixed = mk(['Fix', 'All'], 'Left_And_Right');
+    fixed.o.smartthings = { getSupportedWindDirections: async () => { asked++; return []; } };
+    check(await fixed.o._resolveSwingDirection('D') === 'Left_And_Right' && asked === 0,
+      '★설정에서 방향을 고른 경우엔 기기에 묻지 않는다 (요청을 늘리지 않는다)');
+
+    // 한 번 고르면 다시 묻지 않는다
+    let n = 0;
+    const cached = mk(['Fix', 'Left_And_Right']);
+    cached.o.smartthings = { getSupportedWindDirections: async () => { n++; return ['Fix', 'Left_And_Right']; } };
+    await cached.o._resolveSwingDirection('D');
+    await cached.o._resolveSwingDirection('D');
+    check(n === 1, '고른 방향을 기억한다 (폴마다 다시 묻지 않는다)');
   }
 
   console.log(`\n[바람방향] 통과 ${pass} / 실패 ${fails.length}`);

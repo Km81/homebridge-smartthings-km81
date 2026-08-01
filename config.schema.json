@@ -211,7 +211,7 @@
                   ]
                 },
                 {
-                  "title": "상하 바람",
+                  "title": "회전",
                   "enum": [
                     "wind"
                   ]
@@ -369,9 +369,27 @@
                   ]
                 },
                 {
+                  "title": "회전 (기기가 지원하는 방향으로)",
+                  "enum": [
+                    "rotate"
+                  ]
+                },
+                {
                   "title": "상하 바람",
                   "enum": [
-                    "windDirection"
+                    "Up_And_Low"
+                  ]
+                },
+                {
+                  "title": "좌우 바람",
+                  "enum": [
+                    "Left_And_Right"
+                  ]
+                },
+                {
+                  "title": "상하좌우",
+                  "enum": [
+                    "All"
                   ]
                 },
                 {
@@ -381,7 +399,7 @@
                   ]
                 }
               ],
-              "description": "스윙 토글이 무엇을 켜고 끌지 고릅니다. 상하 바람은 로컬 경로에서만 동작합니다."
+              "description": "스윙 토글이 무엇을 켜고 끌지 고릅니다. 회전은 기기가 지원한다고 알려준 방향을 자동으로 씁니다. 바람 방향은 전송 경로가 로컬일 때만 동작합니다."
             },
             "lockBinding": {
               "title": "[신형·시스템 AC] 어린이 보호용 잠금장치 ↔ 기능",
@@ -549,32 +567,6 @@
               "type": "string",
               "placeholder": "세탁기 보조",
               "description": "비워두면 \"<장치 이름> 보조\"."
-            },
-            "swingWindDirection": {
-              "title": "[신형·시스템 AC] 스윙 켤 때 보낼 바람방향",
-              "type": "string",
-              "default": "Up_And_Low",
-              "description": "스윙 토글을 켰을 때 보낼 방향. 끄면 항상 고정(Fix)을 보냅니다. 기기가 지원하지 않는 값을 고르면 로그가 지원 목록과 함께 알려 줍니다.",
-              "oneOf": [
-                {
-                  "title": "상하",
-                  "enum": [
-                    "Up_And_Low"
-                  ]
-                },
-                {
-                  "title": "좌우",
-                  "enum": [
-                    "Left_And_Right"
-                  ]
-                },
-                {
-                  "title": "상하+좌우",
-                  "enum": [
-                    "All"
-                  ]
-                }
-              ]
             }
           },
           "required": [
@@ -913,7 +905,7 @@
             },
             {
               "value": "wind",
-              "name": "상하 바람"
+              "name": "회전"
             },
             {
               "value": "none",
@@ -1002,34 +994,24 @@
               "name": "무풍"
             },
             {
-              "value": "windDirection",
+              "value": "rotate",
+              "name": "회전 (기기가 지원하는 방향으로)"
+            },
+            {
+              "value": "Up_And_Low",
               "name": "상하 바람"
+            },
+            {
+              "value": "Left_And_Right",
+              "name": "좌우 바람"
+            },
+            {
+              "value": "All",
+              "name": "상하좌우"
             },
             {
               "value": "none",
               "name": "사용 안 함"
-            }
-          ],
-          "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
-          }
-        },
-        {
-          "key": "devices[].swingWindDirection",
-          "type": "select",
-          "required": true,
-          "titleMap": [
-            {
-              "value": "Up_And_Low",
-              "name": "상하"
-            },
-            {
-              "value": "Left_And_Right",
-              "name": "좌우"
-            },
-            {
-              "value": "All",
-              "name": "상하+좌우"
             }
           ],
           "condition": {
