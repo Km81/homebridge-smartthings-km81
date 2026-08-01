@@ -118,28 +118,33 @@ function makeClient(current = 'Fix') {
       '지원 목록을 못 읽으면 빈 배열 (이것 때문에 제어가 막히면 안 된다)');
   }
 
-  // ── ⑥ 설정 화면 계약 — 드롭다운 하나로 끝난다
+  // ── ⑥ 설정 화면 계약 — 종류마다 목록이 다르다
   {
     const SmartAC = require("../lib/accessories/SmartAC");
     const schema = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "config.schema.json"), "utf8"));
     const props = schema.schema.properties.devices.items.properties;
+    const titles = (k) => (props[k].oneOf || []).map((o) => o.title);
+    const values = (k) => (props[k].oneOf || []).map((o) => o.enum[0]);
 
-    check(props.swingWindDirection === undefined,
-      "★두 번째 드롭다운은 없다 (스윙 토글 하나로 끝낸다)");
+    check(props.swingWindDirection === undefined, "★두 번째 드롭다운은 없다");
 
-    const legacy = (props.legacySwingBinding.oneOf || []).map((o) => o.title);
-    check(JSON.stringify(legacy) === JSON.stringify(["무풍", "회전", "사용 안 함"]),
-      `구형은 무풍/회전/사용 안 함 (현재: ${legacy.join("/")})`);
+    check(JSON.stringify(titles("legacySwingBinding")) === JSON.stringify(["무풍", "회전", "사용 안 함"]),
+      `구형: 무풍/회전/사용 안 함 (현재 ${titles("legacySwingBinding").join("/")})`);
+    check(JSON.stringify(titles("swingBinding")) === JSON.stringify(["무풍", "회전", "사용 안 함"]),
+      `신형: 무풍/회전/사용 안 함 (현재 ${titles("swingBinding").join("/")})`);
+    check(JSON.stringify(titles("systemSwingBinding")) === JSON.stringify(["무풍", "상하좌우", "상하 바람", "좌우 바람", "사용 안 함"]),
+      `시스템: 무풍/상하좌우/상하 바람/좌우 바람/사용 안 함 (현재 ${titles("systemSwingBinding").join("/")})`);
 
-    const modern = (props.swingBinding.oneOf || []).map((o) => o.enum[0]);
-    check(modern[0] === "windFree" && modern[modern.length - 1] === "none",
-      "신형·시스템 목록은 무풍으로 시작하고 사용 안 함으로 끝난다");
-    const dirs = modern.filter((v) => v !== "windFree" && v !== "none");
-    check(JSON.stringify(dirs.slice().sort()) === JSON.stringify(SmartAC.SWING_DIRECTIONS.slice().sort()),
+    check(!values("swingBinding").includes("Up_And_Low"),
+      "★신형 목록에는 방향을 직접 넣지 않는다 (회전이 대신 고른다)");
+    check(!values("systemSwingBinding").includes("rotate"),
+      "★시스템 목록에는 회전이 없다 (방향을 직접 고른다)");
+
+    const sysDirs = values("systemSwingBinding").filter((v) => v !== "windFree" && v !== "none");
+    check(sysDirs.every((d) => SUPPORTED.includes(d) && d !== "Fix"),
+      "시스템의 방향 값이 전부 기기 규격 안의 값이다 (고정 제외)");
+    check(sysDirs.concat(["rotate"]).sort().join() === SmartAC.SWING_DIRECTIONS.slice().sort().join(),
       "★스키마 선택지와 코드 상수가 일치한다 (어긋나면 고른 값이 조용히 무시된다)");
-    check(dirs.filter((d) => d !== "rotate").every((d) => SUPPORTED.includes(d)),
-      "방향 값이 전부 기기 규격 안의 값이다");
-    check(!dirs.includes("Fix"), "끄기 전용인 고정은 선택지에 없다");
     check(SmartAC.ROTATE_PREFERENCE.every((m) => SUPPORTED.includes(m) && m !== "Fix"),
       "회전 우선순위가 전부 유효한 방향이다");
   }

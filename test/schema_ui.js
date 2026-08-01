@@ -98,7 +98,7 @@ const AC_ONLY = [
   'minTemp', 'maxTemp', 'hkCoolMode', 'legacySwingBinding', 'legacyLockBinding',
   'legacyOnGuardStrategy', 'legacyOnGuardSec', 'resendModeOnPowerOn',
   'resendAutoCleanOnPowerOn', 'resendSwingOffOnPowerOn', 'powerOnResendStepSec',
-  'hideSwingToggle', 'hideLockToggle', 'coolModeCommand', 'swingBinding',
+  'hideSwingToggle', 'hideLockToggle', 'coolModeCommand', 'swingBinding', 'systemSwingBinding',
   'lockBinding', 'exposeWindFreeSwitch', 'exposeAutoCleanSwitch',
 ];
 const LAUNDRY_TYPES = ['washer', 'dryer'];
@@ -145,11 +145,18 @@ condErrors.forEach((e) => console.log(`       ↳ ${e.key}: ${e.error}`));
   if (!a || !b) {
     check(false, '시스템 에어컨과 신형 에어컨이 둘 다 선언돼 있다');
   } else {
-    const only = (x, y) => x.shown.filter((k) => !y.shown.includes(k));
+    // ⚠️스윙 항목만 종류마다 다르다(v2.9.2) — 시스템만 방향을 직접 고를 수 있다.
+    //    그 외에는 한 항목이라도 갈리면 필수 항목이 화면에서 사라진다.
+    const SWING = ["swingBinding", "systemSwingBinding"];
+    const only = (x, y) => x.shown.filter((k) => !y.shown.includes(k) && !SWING.includes(k));
     const missing = only(a, b);
     const extra = only(b, a);
     check(missing.length === 0 && extra.length === 0,
-      `시스템 에어컨 화면 = 신형 에어컨 화면 (신형에만 ${missing.length}개, 시스템에만 ${extra.length}개)`);
+      `시스템 에어컨 화면 = 신형 에어컨 화면 (스윙 항목 제외 — 신형에만 ${missing.length}개, 시스템에만 ${extra.length}개)`);
+    check(a.shown.includes("swingBinding") && !a.shown.includes("systemSwingBinding"),
+      "신형에는 신형용 스윙 항목만 뜬다");
+    check(b.shown.includes("systemSwingBinding") && !b.shown.includes("swingBinding"),
+      "★시스템에는 시스템용 스윙 항목만 뜬다 (둘 다 뜨면 사용자가 어느 쪽인지 모른다)");
     if (missing.length) console.log(`       ↳ 시스템 에어컨에서 사라진 항목: ${missing.join(', ')}`);
     if (extra.length) console.log(`       ↳ 시스템 에어컨에만 있는 항목: ${extra.join(', ')}`);
   }

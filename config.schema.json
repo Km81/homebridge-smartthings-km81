@@ -358,7 +358,7 @@
               "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 모드."
             },
             "swingBinding": {
-              "title": "[신형·시스템 AC] 스윙(Swing) 토글 ↔ 기능",
+              "title": "[신형 AC] 스윙(Swing) 토글 ↔ 기능",
               "type": "string",
               "default": "windFree",
               "oneOf": [
@@ -369,27 +369,9 @@
                   ]
                 },
                 {
-                  "title": "회전 (기기가 지원하는 방향으로)",
+                  "title": "회전",
                   "enum": [
                     "rotate"
-                  ]
-                },
-                {
-                  "title": "상하 바람",
-                  "enum": [
-                    "Up_And_Low"
-                  ]
-                },
-                {
-                  "title": "좌우 바람",
-                  "enum": [
-                    "Left_And_Right"
-                  ]
-                },
-                {
-                  "title": "상하좌우",
-                  "enum": [
-                    "All"
                   ]
                 },
                 {
@@ -399,7 +381,7 @@
                   ]
                 }
               ],
-              "description": "스윙 토글이 무엇을 켜고 끌지 고릅니다. 회전은 기기가 지원한다고 알려준 방향을 자동으로 씁니다. 바람 방향은 전송 경로가 로컬일 때만 동작합니다."
+              "description": "스윙 토글이 무엇을 켜고 끌지 고릅니다. 회전은 기기가 지원한다고 알려준 방향을 자동으로 씁니다(로컬 경로 전용)."
             },
             "lockBinding": {
               "title": "[신형·시스템 AC] 어린이 보호용 잠금장치 ↔ 기능",
@@ -567,6 +549,44 @@
               "type": "string",
               "placeholder": "세탁기 보조",
               "description": "비워두면 \"<장치 이름> 보조\"."
+            },
+            "systemSwingBinding": {
+              "title": "[시스템 AC] 스윙(Swing) 토글 ↔ 기능",
+              "type": "string",
+              "default": "windFree",
+              "description": "스윙 토글이 무엇을 켜고 끌지 고릅니다. 끄면 항상 고정(Fix)을 보냅니다. 기기가 지원하지 않는 방향을 고르면 로그가 지원 목록과 함께 알려 줍니다(로컬 경로 전용).",
+              "oneOf": [
+                {
+                  "title": "무풍",
+                  "enum": [
+                    "windFree"
+                  ]
+                },
+                {
+                  "title": "상하좌우",
+                  "enum": [
+                    "All"
+                  ]
+                },
+                {
+                  "title": "상하 바람",
+                  "enum": [
+                    "Up_And_Low"
+                  ]
+                },
+                {
+                  "title": "좌우 바람",
+                  "enum": [
+                    "Left_And_Right"
+                  ]
+                },
+                {
+                  "title": "사용 안 함",
+                  "enum": [
+                    "none"
+                  ]
+                }
+              ]
             }
           },
           "required": [
@@ -995,7 +1015,29 @@
             },
             {
               "value": "rotate",
-              "name": "회전 (기기가 지원하는 방향으로)"
+              "name": "회전"
+            },
+            {
+              "value": "none",
+              "name": "사용 안 함"
+            }
+          ],
+          "condition": {
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType===\"smartAc\";"
+          }
+        },
+        {
+          "key": "devices[].systemSwingBinding",
+          "type": "select",
+          "required": true,
+          "titleMap": [
+            {
+              "value": "windFree",
+              "name": "무풍"
+            },
+            {
+              "value": "All",
+              "name": "상하좌우"
             },
             {
               "value": "Up_And_Low",
@@ -1006,16 +1048,12 @@
               "name": "좌우 바람"
             },
             {
-              "value": "All",
-              "name": "상하좌우"
-            },
-            {
               "value": "none",
               "name": "사용 안 함"
             }
           ],
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && model.devices[arrayIndices[0]].deviceType===\"systemAc\";"
           }
         },
         {
