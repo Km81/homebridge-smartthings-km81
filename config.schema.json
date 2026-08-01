@@ -353,6 +353,12 @@
                   "enum": [
                     "aIComfort"
                   ]
+                },
+                {
+                  "title": "자동",
+                  "enum": [
+                    "auto"
+                  ]
                 }
               ],
               "description": "HomeKit '냉방'을 눌렀을 때 기기로 보낼 모드."
@@ -998,6 +1004,10 @@
             {
               "value": "aIComfort",
               "name": "AI 쾌적"
+            },
+            {
+              "value": "auto",
+              "name": "자동"
             }
           ],
           "condition": {

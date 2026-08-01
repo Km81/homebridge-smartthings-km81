@@ -247,6 +247,45 @@ function makeClient(current = 'Fix') {
     check(n === 1, '고른 방향을 기억한다 (폴마다 다시 묻지 않는다)');
   }
 
+  // ── ⑨ ★기기가 지원하지 않는 냉방 모드를 골랐을 때 알려 준다 (v2.10.0)
+  //   실측: 창문형은 자동(Auto)이 없고 천장형은 있다. 설정 목록은 합집합이라 안 되는
+  //   조합이 만들어질 수 있는데, 그러면 냉방을 눌러도 아무 일이 없고 이유가 안 나온다.
+  {
+    const SmartAC = require('../lib/accessories/SmartAC');
+    const mk = (supported) => {
+      const lines = [];
+      const o = Object.create(SmartAC.prototype);
+      o.log = { warn: (m) => lines.push(`warn|${m}`), info: () => {}, debug: () => {} };
+      o._label = '승준 에어컨';
+      o.smartthings = { getSupportedModes: async () => supported };
+      return { o, lines };
+    };
+    const WINDOW = ['AIComfort', 'Cool', 'Dry', 'Fan'];       // 승준 에어컨 실측
+    const CAC = ['Auto', 'Cool', 'Dry', 'Fan', 'AIComfort'];  // 천장형 실측
+
+    const a = mk(WINDOW);
+    await a.o._warnUnsupportedCoolMode('D', 'auto');
+    check(a.lines.some((l) => /지원하지 않습니다/.test(l)),
+      '★창문형에 자동을 걸면 알려 준다 (이 기기엔 Auto가 없다)');
+    check(a.lines.some((l) => /AIComfort, Cool, Dry, Fan/.test(l)), '지원 목록을 함께 보여 준다');
+    const before = a.lines.length;
+    await a.o._warnUnsupportedCoolMode('D', 'auto');
+    check(a.lines.length === before, '그 경고는 한 번만 낸다');
+
+    const b = mk(CAC);
+    await b.o._warnUnsupportedCoolMode('D', 'auto');
+    check(b.lines.length === 0, '천장형에 자동을 걸면 아무 말도 하지 않는다 (지원하므로)');
+
+    const c3 = mk(WINDOW);
+    await c3.o._warnUnsupportedCoolMode('D', 'aIComfort');
+    check(c3.lines.length === 0, '지원하는 모드에는 경고하지 않는다');
+
+    const d = mk([]);
+    await d.o._warnUnsupportedCoolMode('D', 'auto');
+    check(d.lines.length === 0,
+      '★목록을 안 알려주는 기기는 판정하지 않는다 (모르면 트집 잡지 않는다)');
+  }
+
   console.log(`\n[바람방향] 통과 ${pass} / 실패 ${fails.length}`);
   for (const f of fails) console.log(`  ✗ ${f}`);
   process.exit(fails.length ? 1 : 0);

@@ -640,13 +640,41 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     assert.ok(!/Sec\b/.test(legacy.match(/this\.timeout[^\n]*/)?.[0] || ''), 'LegacyAC가 초 키를 직접 읽는다');
   });
 
-  await t('신형 AC 모드 목록이 기기 실제 지원값과 일치한다', () => {
+  await t('신형 AC 모드 목록이 실기기가 보고한 값들의 합집합이다', () => {
     const s = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.schema.json'), 'utf8'));
     const modes = s.schema.properties.devices.items.properties.coolModeCommand.oneOf.flatMap(o => o.enum);
-    // 신형 AC가 실제로 보고하는 supportedAcModes(aIComfort·cool·dry·fan)만 노출해야 한다.
-    // 청정 계열은 구형 2in1 전용이라 목록에 두면 '없는 걸 고르게' 만든다(사용자 지적).
-    assert.deepStrictEqual(modes.sort(), ['aIComfort','cool','dry','fan'].sort(),
-      '신형 AC 모드 목록이 기기 실제 지원값과 다르다: '+modes.join(','));
+    const { MODE_MAP } = require(path.join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'));
+
+    // ★지원 목록은 **모델마다 다르다**(v2.10.0에 실측으로 확인).
+    //   그래서 "한 기기의 목록과 일치"는 성립하지 않는다 — 그 계약은 승준 에어컨 하나를
+    //   기준으로 만들어졌고, 천장형이 등장하면서 전제가 무너졌다.
+    //   대신 ①합집합이고 ②모든 값이 어느 실기기에서든 실제로 보고된 것이어야 한다.
+    //   ⚠️여기 값을 늘릴 땐 반드시 **실기기 supportedModes 실측 근거**를 함께 남길 것.
+    const MEASURED = {
+      '승준 에어컨(창문형, 2026-08-01)': ['AIComfort', 'Cool', 'Dry', 'Fan'],
+      '사용자 천장형 CAC(2026-08-01)': ['Auto', 'Cool', 'Dry', 'Fan', 'AIComfort'],
+    };
+    const union = new Set(Object.values(MEASURED).flat());
+
+    // ①설정 목록의 모든 값이 실측 합집합 안에 있다 (없는 걸 고르게 만들지 않는다)
+    const unmeasured = modes.filter((m) => !union.has(MODE_MAP[String(m).toLowerCase()]));
+    assert.deepStrictEqual(unmeasured, [],
+      '실기기에서 확인된 적 없는 모드가 목록에 있다: ' + unmeasured.join(','));
+
+    // ②실측된 모든 값을 고를 수 있다 (있는 걸 못 고르게 만들지 않는다)
+    const mapped = new Set(modes.map((m) => MODE_MAP[String(m).toLowerCase()]));
+    const missing = [...union].filter((v) => !mapped.has(v));
+    assert.deepStrictEqual(missing, [],
+      '실기기가 지원하는데 목록에 없는 모드: ' + missing.join(','));
+
+    // ③★기기마다 다르므로, 안 되는 조합은 코드가 짚어 줘야 한다
+    const acc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'accessories', 'SmartAC.js'), 'utf8');
+    assert.ok(/_warnUnsupportedCoolMode/.test(acc) && /getSupportedModes/.test(acc),
+      '기기 지원 목록으로 확인해 알려 주는 경로가 없다 (구형 AC에는 있다)');
+
+    // ④청정 계열은 구형 2in1 전용 — 신형 목록에 두면 없는 걸 고르게 된다(사용자 지적)
+    assert.ok(!modes.some((m) => /clean/i.test(m)),
+      '청정 계열이 신형 목록에 있다: ' + modes.join(','));
   });
 
   await t('드롭다운 렌더 소스(layout titleMap)가 schema oneOf와 값·라벨 모두 일치한다', () => {

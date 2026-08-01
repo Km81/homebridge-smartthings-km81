@@ -269,5 +269,21 @@ for (const k of ['deviceLabel', 'deviceId']) {
 const hostTitle = (((DEVPROPS.local || {}).properties || {}).host || {}).title || '';
 check(HINT.test(hostTitle), `'local.host' 제목에 필수 여부 안내가 있다 (현재: ${hostTitle || '(없음)'})`);
 
+// ⑩ ★홈킷 에어컨 타일의 모드는 **냉방 고정**이다 (사용자 결정, 반복 확인됨).
+//    AUTO를 열면 홈킷이 냉난방 자동으로 보고 **난방 임계온도가 딸려 나온다.**
+//    `냉방 버튼 → 보낼 모드`(기기에 무엇을 보낼지)와는 **다른 층**이다 — 그쪽에 `자동`이
+//    들어가도 타일은 그대로여야 한다. 헷갈려 여는 것을 여기서 막는다.
+{
+  const fsx = require('fs');
+  const pathx = require('path');
+  for (const f of ['SmartAC.js', 'LegacyAC.js']) {
+    const src = fsx.readFileSync(pathx.join(__dirname, '..', 'lib', 'accessories', f), 'utf8');
+    check(/validValues:\s*\[\s*C\.TargetHeaterCoolerState\.COOL\s*\]/.test(src),
+      `${f}: 홈킷 모드가 냉방으로 고정돼 있다 (AUTO/HEAT를 열면 난방이 딸려온다)`);
+    check(!/TargetHeaterCoolerState\.(AUTO|HEAT)/.test(src),
+      `${f}: 홈킷 모드에 자동·난방을 쓰지 않는다`);
+  }
+}
+
 console.log(fail.length ? `\n❌ ${fail.length}건 실패` : '\n✅ 전부 통과');
 process.exit(fail.length ? 1 : 0);
