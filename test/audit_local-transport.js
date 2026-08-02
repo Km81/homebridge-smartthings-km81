@@ -455,8 +455,16 @@ const devInfo = { host: '10.0.0.1', port: 49154, label: '테스트기기' };
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     assert.ok(/_bindFromCacheOffline\(/.test(src), '오프라인 바인딩 폴백이 없다');
     assert.ok(/_scheduleRediscovery\(/.test(src), '백그라운드 재검색이 없다');
-    const fn = src.slice(src.indexOf('_bindFromCacheOffline('), src.indexOf('_scheduleRediscovery(stDevices, attempt'));
-    assert.ok(/transport === 'local'/.test(fn), '로컬 기기 대상 필터가 없다');
+    const fn = src.slice(src.indexOf('_bindFromCacheOffline(stDevices) {'), src.indexOf('_scheduleRediscovery(stDevices, attempt'));
+    assert.ok(/transport !== 'local'/.test(fn), '로컬 기기 대상 필터가 없다');
+    // ★★2026-08-03 적대 리뷰 — **재검색은 아직 못 붙은 기기가 있을 때만** 건다.
+    //   예전엔 다 붙었어도 30초→120초→600초로 영원히 재검색해, 10월에 구독이 끊기면
+    //   `GET /v1/devices`가 **하루 144회** 무한히 나갔다.
+    assert.ok(/return unbound;/.test(fn), '못 붙은 기기 목록을 돌려주지 않는다');
+    assert.ok(/_scheduleRediscoveryIfNeeded\(this\._bindFromCacheOffline\(/.test(src),
+      '재검색이 "못 붙은 기기가 있을 때만"이라는 조건을 타지 않는다');
+    assert.ok(!/_scheduleRediscovery\(stDevices\)/.test(src),
+      '전체 기기를 대상으로 무조건 재검색하는 호출이 남아 있다');
   });
 
   await t('index.js가 읽는 플랫폼 설정 키가 스키마에 등재돼 있다', () => {

@@ -522,8 +522,7 @@ class SmartThingsKM81Platform {
       const remoteDevices = await this.smartthings.getDevices();
       if (!remoteDevices || remoteDevices.length === 0) {
         this.log.warn('SmartThings에서 어떤 장치도 찾지 못했습니다. 권한이나 연결을 확인해주세요.');
-        this._bindFromCacheOffline(stDevices);
-        this._scheduleRediscovery(stDevices);
+        this._scheduleRediscoveryIfNeeded(this._bindFromCacheOffline(stDevices));
         return false;
       }
       this.log.info(`SmartThings 장치 ${remoteDevices.length}개 발견`);
@@ -551,8 +550,7 @@ class SmartThingsKM81Platform {
       return true;
     } catch (e) {
       this.log.error('SmartThings 장치 검색 중 오류:', e.message);
-      this._bindFromCacheOffline(stDevices);
-      this._scheduleRediscovery(stDevices);
+      this._scheduleRediscoveryIfNeeded(this._bindFromCacheOffline(stDevices));
       return false;
     }
   }
@@ -561,16 +559,19 @@ class SmartThingsKM81Platform {
   // 정전 복구나 인터넷 장애 중에 홈브릿지가 재시작되면, LAN으로 멀쩡히 통신 가능한
   // 승준 에어컨·건조기까지 바인딩이 안 돼 홈킷 조작이 조용히 유실됐다(무성 유실 = 최악).
   // 캐시된 액세서리에 지난 부팅의 deviceId가 남아 있으므로 그것으로 붙인다.
+  // ★반환값 = **아직 붙지 못한** 기기 목록. 재검색은 이것만 대상으로 한다(아래 참조).
   _bindFromCacheOffline(stDevices) {
-    const localOnly = stDevices.filter(d => d?.transport === 'local');
-    if (localOnly.length === 0) return;
+    const unbound = [];
     let bound = 0;
-    for (const configDevice of localOnly) {
+    for (const configDevice of stDevices) {
+      // 클라우드 전송 기기는 검색 없이는 방법이 없다 — 재검색 대상으로 남긴다.
+      if (configDevice?.transport !== 'local') { unbound.push(configDevice); continue; }
       const target = normalizeKorean(configDevice.deviceLabel);
       const cached = this.accessories.find(a =>
         normalizeKorean(a.context?.configDevice?.deviceLabel || '') === target && a.context?.device?.deviceId);
       if (!cached) {
         this.log.warn(`[${labelOf(configDevice)}] 클라우드 검색 실패 + 캐시에도 정보가 없어 이번 부팅에는 바인딩하지 못했습니다.`);
+        unbound.push(configDevice);
         continue;
       }
       this.log.warn(`[${labelOf(configDevice)}] 클라우드 검색 실패 — 캐시 정보로 로컬 경로만 살려 바인딩합니다.`);
@@ -578,6 +579,22 @@ class SmartThingsKM81Platform {
       bound += 1;
     }
     if (bound > 0) this.log.info(`오프라인 바인딩 ${bound}개 — 로컬 전송 기기는 정상 동작합니다.`);
+    return unbound;
+  }
+
+  // ★★2026-08-03 — **재검색은 아직 못 붙은 기기가 있을 때만** 한다.
+  //   v2.10.1까지는 붙었든 말든 30초→120초→600초로 **영원히** 재검색했다. 10월에
+  //   구독이 끊기면 `GET /v1/devices`가 매번 실패하므로 **하루 144회**가 무한히 나간다.
+  //   하필 우리가 권장하는 구성(deviceId를 안 적고 IP만 적는 것)에서 정확히 열린다.
+  //   ⚠️바인딩만 클라우드가 필요한 것이고, **런타임 폴백은 이 루프와 무관하다**
+  //     (`_withFallback`은 deviceId만 있으면 클라우드를 직접 부른다). 그래서 다 붙었으면
+  //     재검색을 멈춰도 잃는 기능이 없다.
+  _scheduleRediscoveryIfNeeded(unbound) {
+    if (!unbound || unbound.length === 0) {
+      this.log.info('모든 기기가 캐시·로컬 정보로 붙었습니다 — 클라우드 재검색을 하지 않습니다.');
+      return;
+    }
+    this._scheduleRediscovery(unbound);
   }
 
   // 클라우드가 돌아오면 조용히 보정한다. 실패해도 로컬은 이미 붙어 있다.
@@ -777,7 +794,11 @@ class SmartThingsKM81Platform {
     //   "클라우드 0회"를 원하는 구성에서 목표를 못 이루게 하는 마지막 한 건.
     const anyFallback = localDevs.some(d => d.local?.fallbackToCloud !== false);
     if (!anyFallback) {
-      this.log.info('모든 로컬 기기가 클라우드 폴백을 끔 — 토큰 keepalive를 걸지 않습니다 (클라우드 호출 0회).');
+      // ⚠️여기서 「클라우드 호출 0회」라고 단정하면 **거짓말이 된다**(2026-08-03 적대 리뷰).
+      //   OAuth를 남겨 둔 채 폴백만 끈 구성에서는, 이 줄이 찍히는 같은 부팅에서 이미
+      //   부팅 시 기기 검색(`GET /v1/devices`)이 나갔을 수 있다. 사실인 것만 말한다 —
+      //   **앞으로 주기적인 호출이 없다**는 것.
+      this.log.info('모든 로컬 기기가 클라우드 폴백을 끔 — 토큰 keepalive를 걸지 않습니다 (이후 주기적인 클라우드 호출 없음).');
       return;
     }
 
@@ -874,7 +895,29 @@ class SmartThingsKM81Platform {
     //   걸러져 activeUUIDs에 안 들어가므로, 여기서 지우면 곧바로 영구 삭제가 된다.
     //   (호출 지점이 넷이라 개별로 막지 않고 이 한 곳에서 막는다.)
     if (this._unknownTypes) return;
-    const stale = this.accessories.filter(a => !this.activeUUIDs.has(a.UUID));
+
+    // ★★2026-08-03 — **config에 아직 이름이 남아 있는 액세서리는 지우지 않는다**(적대 리뷰 H3).
+    //   시나리오: DHCP가 기기 A의 IP를 다른 기기에 줬는데 마침 discovered 캐시가 비어 있으면,
+    //   프로브가 **그 남의 di**를 A의 deviceId로 배운다. 신원 대조는 "프로브가 채운 deviceId"와
+    //   기기 di를 비교하므로 **정의상 통과**한다. UUID가 바뀌니 A의 액세서리는 stale이 되고
+    //   여기서 **영구 삭제**된다 — 홈킷 방·장면·자동화 배치가 통째로 날아간다.
+    //   삭제는 되돌릴 수 없고 남겨두는 건 되돌릴 수 있다. 그래서 남긴다.
+    //   ⚠️설정에서 기기를 **빼거나 이름을 바꾸면** 이름이 사라지므로 종전대로 지워진다.
+    const configLabels = new Set(
+      (this.devices || []).map(d => normalizeKorean(d?.deviceLabel || '')).filter(Boolean));
+    const kept = [];
+    const stale = this.accessories.filter(a => {
+      if (this.activeUUIDs.has(a.UUID)) return false;
+      const label = normalizeKorean(a.context?.configDevice?.deviceLabel || '');
+      if (label && configLabels.has(label)) { kept.push(a); return false; }
+      return true;
+    });
+    for (const a of kept) {
+      this.log.warn(`[${a.displayName}] 설정에 같은 이름이 남아 있어 ★지우지 않았습니다 — `
+        + '기기의 deviceId가 지난 부팅과 달라졌습니다. 기기 IP가 맞는지 확인하세요. '
+        + '기기를 정말 교체했다면 설정에서 이 이름을 지웠다가 다시 넣으면 정리됩니다.');
+    }
+
     if (stale.length > 0) {
       this.log.info(`${stale.length}개의 오래된 액세서리를 제거합니다.`);
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);

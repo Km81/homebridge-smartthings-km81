@@ -136,7 +136,13 @@ const MIN = 60 * 1000, HOUR = 60 * MIN, DAY = 24 * HOUR;
     const { log } = ka;
     await clock.advance(3 * DAY);
     ka.restore();
-    t('K2 폴백 전부 OFF → 안 걺 + "클라우드 호출 0회" 안내', calls === 0 && log.L.info.some(m => m.includes('0회')));
+    const note = log.L.info.find(m => m.includes('keepalive를 걸지 않습니다')) || '';
+    t('K2 폴백 전부 OFF → keepalive를 걸지 않고 그 사실을 알린다', calls === 0 && !!note);
+    // ★★2026-08-03 적대 리뷰 — 안내가 **사실이어야 한다**. OAuth를 남긴 채 폴백만 끈
+    //   구성에서는 같은 부팅에 이미 기기 검색(`GET /v1/devices`)이 나갔을 수 있으므로
+    //   「클라우드 호출 0회」는 거짓말이 된다. 참인 것(=앞으로 주기 호출 없음)만 말한다.
+    t('K2b 안내가 "총 0회"라고 단정하지 않는다 (거짓말 금지)',
+      !/호출\s*0회/.test(note) && /주기/.test(note));
   }
 
   // K3·K4 — 첫 실행 30분, 이후 24시간마다 (7일 = 총 8회)

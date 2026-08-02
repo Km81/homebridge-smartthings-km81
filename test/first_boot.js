@@ -220,6 +220,38 @@ const mkSelf = (overrides = {}) => {
     assert.ok(removed && removed.length === 1, '정상 상황에서 정리가 동작하지 않는다');
   });
 
+  // ── ★★남의 기기가 그 IP에 앉아도 액세서리를 지우지 않는다 (2026-08-03 적대 리뷰 H3) ──
+  //    DHCP가 기기 A의 IP를 다른 기기에 줬는데 discovered 캐시가 비어 있으면, 프로브가
+  //    **남의 di**를 A의 deviceId로 배운다. 신원 대조는 "프로브가 채운 deviceId ↔ 기기 di"라
+  //    정의상 통과한다 → UUID가 바뀌어 A의 액세서리가 stale이 되고 **영구 삭제**됐다.
+  //    삭제는 되돌릴 수 없고, 남겨두는 건 되돌릴 수 있다.
+  await t('★설정에 이름이 남아 있는 액세서리는 UUID가 달라져도 지우지 않는다', () => {
+    const { p, L } = mkPlatform(LOCAL_ONLY);
+    let removed = null;
+    p.api.unregisterPlatformAccessories = (_a, _b, list) => { removed = list; };
+    // 지난 부팅에 만들어진 액세서리 — 같은 이름, 그러나 이제 UUID가 다르다
+    p.accessories = [{ UUID: 'old-uuid', displayName: '신형 에어컨',
+      context: { configDevice: { deviceLabel: '신형 에어컨' } } }];
+    p.activeUUIDs = new Set(['new-uuid']);
+    p._unknownTypes = false;
+    p._cleanupStaleAccessories();
+    assert.strictEqual(removed, null, '설정에 이름이 남아 있는데 삭제했다');
+    assert.strictEqual(p.accessories.length, 1, '액세서리가 사라졌다');
+    assert.ok(L.warn.some(m => /지우지 않았습니다/.test(m)), '왜 남겼는지 알리지 않았다');
+  });
+
+  await t('설정에서 빠진 기기는 종전대로 정리된다 (대조군)', () => {
+    const { p } = mkPlatform(LOCAL_ONLY);
+    let removed = null;
+    p.api.unregisterPlatformAccessories = (_a, _b, list) => { removed = list; };
+    p.accessories = [{ UUID: 'old-uuid', displayName: '치운 에어컨',
+      context: { configDevice: { deviceLabel: '치운 에어컨' } } }];
+    p.activeUUIDs = new Set();
+    p._unknownTypes = false;
+    p._cleanupStaleAccessories();
+    assert.ok(removed && removed.length === 1, '설정에 없는 기기가 정리되지 않았다');
+  });
+
   // ⚠️v2.7.0에서 뒤집힌 계약: 'deviceId 없음 = 클라우드 필요'는 더 이상 참이 아니다.
   //   로컬 기기는 부팅 때 기기에게 직접 물어 deviceId를 얻는다. 대조군을 실제로 남는
   //   조건으로 바꾼다 — 기기 IP가 없으면 물어볼 곳이 없다.
