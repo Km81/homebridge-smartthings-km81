@@ -240,6 +240,43 @@ const mkSelf = (overrides = {}) => {
     assert.ok(L.warn.some(m => /지우지 않았습니다/.test(m)), '왜 남겼는지 알리지 않았다');
   });
 
+  // ★★2026-08-03 2차 — 위 보호는 **이름으로** 지켰는데, 우리가 권장하는 구성(라벨을 비우고
+  //   IP만 적기)에서는 정의상 무력이었다. `_probeOne`이 기기가 알려준 이름을 `deviceLabel`에
+  //   채워 넣으므로, 남의 기기가 그 IP에 앉으면 config 라벨 자체가 **그 남의 이름**이 된다.
+  //   즉 v2.11.0이 막았다고 한 시나리오가 그대로 열려 있었다(적대 리뷰 H1-a).
+  await t('★★이름이 남의 것으로 바뀌어도 기기 IP가 같으면 지우지 않는다', () => {
+    const { p } = mkPlatform(LOCAL_ONLY);
+    p.devices[0].deviceLabel = '남의 세탁기';        // 프로브가 덮어쓴 상황
+    let removed = null;
+    p.api.unregisterPlatformAccessories = (_a, _b, list) => { removed = list; };
+    p.accessories = [{
+      UUID: 'old-uuid', displayName: '신형 에어컨',
+      context: { device: { deviceId: 'A' }, configDevice: { deviceLabel: '신형 에어컨', local: { host: '10.0.0.9' } } },
+    }];
+    p.activeUUIDs = new Set(['new-uuid']);
+    p._unknownTypes = false;
+    p._cleanupStaleAccessories();
+    assert.strictEqual(removed, null, '이름이 달라졌다고 삭제했다 (host로 지켜야 한다)');
+  });
+
+  // ★서브 액세서리(무풍·자동건조 스위치, 종료 알림 센서)는 `context.configDevice`가 없어
+  //   1차 판정이 항상 빈 문자열이었다 → 본체는 살고 **스위치만 영구 삭제**됐다(H1-b).
+  await t('★남긴 기기의 서브 액세서리(스위치·센서)도 함께 남긴다', () => {
+    const { p } = mkPlatform(LOCAL_ONLY);
+    let removed = null;
+    p.api.unregisterPlatformAccessories = (_a, _b, list) => { removed = list; };
+    p.accessories = [
+      { UUID: 'main-old', displayName: '신형 에어컨',
+        context: { device: { deviceId: 'A' }, configDevice: { deviceLabel: '신형 에어컨', local: { host: '10.0.0.9' } } } },
+      { UUID: 'sw-old', displayName: '신형 에어컨 - 무풍', context: { device: { deviceId: 'A' } } },
+    ];
+    p.activeUUIDs = new Set(['main-new']);
+    p._unknownTypes = false;
+    p._cleanupStaleAccessories();
+    assert.strictEqual(removed, null, `서브 액세서리가 삭제됐다: ${(removed || []).map(a => a.displayName)}`);
+    assert.strictEqual(p.accessories.length, 2, '액세서리 수가 줄었다');
+  });
+
   await t('설정에서 빠진 기기는 종전대로 정리된다 (대조군)', () => {
     const { p } = mkPlatform(LOCAL_ONLY);
     let removed = null;
@@ -448,11 +485,12 @@ const mkSelf = (overrides = {}) => {
   // "요구사항을 테스트에 적는 것과, 그 계약을 우회하는 새 상태에 테스트를 붙이는 것은 다른 일."
   console.log('\n[재시도 타이머 본문]');
 
-  const runRetry = async ({ cloudOk, probes, lateFill = null }) => {
+  const runRetry = async ({ cloudOk, probes, lateFill = null, devices = null,
+    accessories = [], attempt = 1 }) => {
     const L = { info: [], warn: [], error: [] };
     let cleaned = 0;
     const bound = [];
-    const devs = [
+    const devs = devices || [
       { deviceType: 'smartAc', deviceLabel: 'A', transport: 'local', local: { host: '10.0.0.1' } },
     ];
     const self = {
@@ -467,12 +505,13 @@ const mkSelf = (overrides = {}) => {
       registerShutdown: () => {},
       _bindSmartThingsDevice: (d) => bound.push(d.deviceId),
       _cleanupStaleAccessories: () => { cleaned++; },
+      accessories,
     };
     if (lateFill) devs[0].deviceId = lateFill;   // 예산 초과 뒤 늦게 채워진 상황
     const real = global.setTimeout;
     global.setTimeout = (fn) => { const h = real(fn, 0); if (h.unref) h.unref(); return h; };
     try {
-      self._scheduleLocalIdRetry(devs, 1);
+      self._scheduleLocalIdRetry(devs, attempt);
       await new Promise((r) => real(r, 60));
     } finally { global.setTimeout = real; }
     return { L, cleaned, bound, devs };
@@ -498,6 +537,53 @@ const mkSelf = (overrides = {}) => {
     });
     assert.deepStrictEqual(r.bound, ['late-id'],
       '늦게 성공한 프로브가 재시도를 무장해제해 그 기기가 영영 안 붙는다');
+  });
+
+  // ★★2026-08-03 — 부팅 경로의 중복 deviceId 검사가 **재시도 경로에는 없었다**(적대 리뷰 A-M3).
+  //   같은 IP를 두 항목에 적었을 때, 부팅 때 기기가 켜져 있으면 error로 잡히지만 꺼져 있다가
+  //   재시도 중 켜지면 둘 다 같은 di를 배워 **같은 UUID에 두 번 바인딩**된다(경고 0줄).
+  await t('★재시도 중 두 항목이 같은 deviceId로 수렴하면 경고한다', async () => {
+    const r = await runRetry({
+      cloudOk: true,
+      probes: async () => ({ deviceId: 'same-id', name: 'A' }),
+      devices: [
+        { deviceType: 'smartAc', deviceLabel: 'A', transport: 'local', local: { host: '10.0.0.1' } },
+        { deviceType: 'smartAc', deviceLabel: 'B', transport: 'local', local: { host: '10.0.0.1' } },
+      ],
+    });
+    assert.ok(r.L.error.some((l) => /같은 기기를 가리킵니다/.test(l)),
+      '무경고로 한 대가 사라진다 — 부팅 경로와 같은 검사가 여기에도 있어야 한다');
+  });
+
+  // ★★2026-08-03 — 프로브를 다 소진하면 **캐시 액세서리의 deviceId를 3차 소스로 쓴다**
+  //   (적대 리뷰 A-M2). `discovered.json` 유실 + 부팅 때 기기 무응답(플러그 뽑힘·계절 보관)이
+  //   6.5분 넘게 이어지면, 기기가 나중에 살아나도 **재시작 전까지 영영 안 붙었다.**
+  await t('★★프로브를 다 써도 지난 부팅 정보로 붙인다 (영구 미바인딩 방지)', async () => {
+    const devs = [{ deviceType: 'smartAc', deviceLabel: 'A', transport: 'local', local: { host: '10.0.0.1' } }];
+    const r = await runRetry({
+      cloudOk: true,
+      probes: async () => { throw new Error('무응답'); },
+      devices: devs,
+      attempt: 13,                       // LOCAL_ID_RETRY_MAX(12) 초과 = 포기 시점
+      accessories: [{
+        UUID: 'cached', displayName: 'A',
+        context: { device: { deviceId: 'from-cache' }, configDevice: { deviceLabel: 'A', local: { host: '10.0.0.1' } } },
+      }],
+    });
+    assert.deepStrictEqual(r.bound, ['from-cache'], '캐시에 정보가 있는데 포기했다');
+    assert.ok(r.L.warn.some((l) => /지난 부팅 정보로 연결합니다/.test(l)), '무엇을 했는지 알리지 않았다');
+    assert.strictEqual(r.L.error.length, 0, '구제했으면서 "실패했으니 재시작하라"고 말했다');
+  });
+
+  await t('캐시에도 없으면 종전대로 포기하고 알린다 (대조군)', async () => {
+    const r = await runRetry({
+      cloudOk: true,
+      probes: async () => { throw new Error('무응답'); },
+      attempt: 13,
+      accessories: [],
+    });
+    assert.strictEqual(r.bound.length, 0, '없는 정보로 붙였다');
+    assert.ok(r.L.error.some((l) => /재시작하세요/.test(l)), '포기 사실을 알리지 않는다');
   });
 
   await t('같은 기기를 두 번 붙이지 않는다', async () => {

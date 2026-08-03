@@ -21,7 +21,7 @@ const check = (cond, label) => { if (cond) pass++; else fails.push(label); };
 const LAST = { power: true, currentTemp: 27, coolingSetpoint: 25, windFree: false, autoClean: false };
 
 /** 실제 configure()를 태우는 최소 rig. 기기 호출은 전부 센다. */
-function rig({ remembered, cloudPower = false } = {}) {
+function rig({ remembered, cloudPower = false, polling = 3600 } = {}) {
   const calls = [];
   const logs = [];
   const persisted = [];
@@ -103,8 +103,9 @@ function rig({ remembered, cloudPower = false } = {}) {
     smartthings: st,
     platform: { config: {}, registerShutdown: (fn) => { o._shutdownFn = fn; } },
   });
-  // 폴링은 이 시험의 대상이 아니다 — 타이머가 뜨면 프로세스가 안 죽는다.
-  o.configure(accessory, { coolModeCommand: 'cool', pollingInterval: 0 }, '0.0.0');
+  // ⚠️폴링을 **0으로 끄면 시드 자체가 비활성**이다(그게 계약이다). 시험에서는 주기를
+  //   아주 길게 둬서 타이머가 이 프로세스 안에서 발화하지 않게 한다.
+  o.configure(accessory, { coolModeCommand: 'cool', pollingInterval: polling }, '0.0.0');
 
   return {
     o, C, main, accessory, calls, logs, persisted,
@@ -202,6 +203,84 @@ function rig({ remembered, cloudPower = false } = {}) {
         `깨진 기억(${JSON.stringify(bad)})에도 안전하다`);
       r.stop();
     }
+  }
+
+  // ── ⑨ ★★폴링을 끈 구성에서는 시드를 쓰지 않는다 (적대 리뷰 A-M1 / B-LOW-2)
+  //    `_lazyGet`은 `_state[k]`가 정의돼 있으면 즉답한다. 갱신해 줄 폴이 없으면 지난 부팅
+  //    값이 **영원히** 표시된다 — 수정 전에는 콜드 리드가 기기까지 가서 죽은 기기면
+  //    정직하게 '응답 없음'이 났다. 그 정직함을 시드로 없애면 안 된다.
+  //    ⚠️`_seeded`에 안 넣는 것만으로는 못 막는다. `_state`가 정의되는 순간 read가 멈춘다.
+  {
+    const r = rig({ remembered: LAST, polling: 0 });
+    check(r.o._state.power === undefined,
+      '★★폴링이 꺼져 있으면 시드를 쓰지 않는다 (영구 동결 방지)');
+    await r.get(r.C.Active);
+    check(r.calls.includes('getPower'), '대신 종전대로 기기에 묻는다');
+    r.stop();
+  }
+
+  // ── ⑩ ★★신선도 가드가 **전원에만** 적용돼 있었다 (적대 리뷰 B-M1)
+  //    v2.11.0의 M6은 Active ON만 고쳤다. 무풍·자동건조·바람방향은 여전히 얼어붙은 값으로
+  //    판정해 **전송 0회인데 홈킷·HA에는 성공으로 보고**했다. 켜기만 정직하고 나머지는 거짓.
+  //    시드로 시작한 부팅 직후(첫 폴 전)도 같은 창이다.
+  {
+    const stale = rig({ remembered: LAST });     // _stateFresh = false
+    stale.o._state.windFree = true;
+    stale.o._state.autoClean = true;
+    await stale.o._setWindFree('dev1', true);
+    await stale.o._setAutoClean('dev1', true);
+    check(stale.calls.includes('setWindFree'),
+      '★★폴이 실패 중이면 무풍도 실제로 보낸다 (조용히 삼키지 않는다)');
+    check(stale.calls.includes('setAutoClean'),
+      '★★자동건조도 마찬가지');
+    stale.stop();
+
+    const fresh = rig({ remembered: LAST });
+    fresh.o._stateFresh = true;                   // 방금 폴이 성공했다
+    fresh.o._state.windFree = true;
+    fresh.o._state.autoClean = true;
+    await fresh.o._setWindFree('dev1', true);
+    await fresh.o._setAutoClean('dev1', true);
+    check(!fresh.calls.includes('setWindFree') && !fresh.calls.includes('setAutoClean'),
+      '★신선하면 예전처럼 생략한다 (불필요한 왕복을 늘리지 않는다)');
+    fresh.stop();
+  }
+
+  // ── ⑪ ★★시드가 "첫 폴의 무조건 재조정"을 없앴다 (적대 리뷰 B-M2)
+  //    v2.11.2까지는 `_state`가 전부 undefined라 첫 폴이 **무조건** push했고, 그것이
+  //    홈킷 특성과 기기 상태가 어긋났을 때의 **암묵적 자가치유**였다. 시드가 `_state`를
+  //    채우면서 그 재조정이 사라져 어긋난 표시가 **재시작을 넘어 영구 고착**된다.
+  {
+    const src = require('fs').readFileSync(
+      path.join(__dirname, '..', 'lib', 'accessories', 'SmartAC.js'), 'utf8');
+    const poll = src.slice(src.indexOf('const pollOnce = async'));
+    check(/const forcePush = !this\._firstPollDone;/.test(poll),
+      '★첫 성공 폴을 구분한다');
+    const pushes = (poll.match(/if \(forcePush \|\|/g) || []).length
+      + (poll.match(/\(forcePush \|\| this\._state/g) || []).length;
+    check(pushes >= 5,
+      `★첫 폴에서 값이 같아도 전 특성을 민다 (실측 분기 ${pushes}곳)`);
+  }
+
+  // ── ⑫ ★★폴 도중 들어온 명령을 낡은 값으로 덮지 않는다 (적대 리뷰 B-M3)
+  //    폴이 값을 다 읽은 뒤 끄기가 완료되면, 라운드 마무리가 Active=1을 되밀어
+  //    HA에 **2~10초짜리 유령 ON**이 뜬다. '에어컨 켜짐' 자동화가 에지에서 발화할 수 있다.
+  {
+    const src = require('fs').readFileSync(
+      path.join(__dirname, '..', 'lib', 'accessories', 'SmartAC.js'), 'utf8');
+    check(/this\._writeGen = \(this\._writeGen \|\| 0\) \+ 1;/.test(src),
+      '★모든 set 핸들러가 쓰기 세대를 올린다 (홈킷도 MQTT도 이 한 곳을 지난다)');
+    const poll = src.slice(src.indexOf('const pollOnce = async'));
+    check(/const genAtStart = this\._writeGen;/.test(poll), '★폴이 라운드 시작 세대를 잡는다');
+    check(/if \(this\._writeGen !== genAtStart\)[\s\S]{0,220}return;/.test(poll),
+      '★★push 직전에 재대조해 달라졌으면 이번 라운드를 버린다');
+
+    // 동작으로도 확인 — set 핸들러가 실제로 세대를 올리는가
+    const r = rig({ remembered: LAST });
+    const before = r.o._writeGen;
+    await r.set(r.C.Active, 1);
+    check(r.o._writeGen === before + 1, '★set 1회에 세대가 정확히 1 올라간다');
+    r.stop();
   }
 
   console.log(`\n[콜드 리드 즉답] 통과 ${pass} / 실패 ${fails.length}`);

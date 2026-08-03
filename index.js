@@ -269,12 +269,18 @@ class SmartThingsKM81Platform {
           this.log.info('로컬 경로 최초 설치가 진행 중입니다 — 몇 분 걸릴 수 있습니다. '
             + (canCloud
               ? '그동안은 클라우드로 동작하고, 설치가 끝나면 저절로 로컬로 전환됩니다.'
-              : '설치가 끝나면 저절로 연결되며, 그때까지 이 기기들은 제어되지 않습니다.'));
+              // ⚠️여기서 `제어되지 않습니다`를 쓰면 안 된다(적대 리뷰 C-M1) — NAS 감시기의
+              //   **실패 어휘**인데 이 줄엔 `[기기라벨]` 접두가 없고, 심지어 **정상 경로**다
+              //   (최초 설치 진행 중). 짝이 되는 복구 문구도 없어 🔴가 안 풀린다.
+              //   기기별 진짜 경보는 10회 실패 시점에 라벨을 달고 따로 나간다.
+              : '설치가 끝나면 저절로 연결되며, 그때까지 이 기기들은 조작할 수 없습니다.'));
         } else if (anyFallback) {
           this.log.error(`로컬 브릿지 기동 지연/실패 — 준비될 때까지 클라우드로 동작합니다: ${e.message}`);
         } else {
+          // ⚠️같은 이유로 어휘를 피한다(C-M1) — 라벨이 없어 감시기가 기기를 특정할 수 없고,
+          //   이 줄에는 짝이 되는 복구 문구가 없다(`로컬 브릿지 준비됨`엔 복구 어휘가 없다).
           this.log.error('로컬 브릿지 기동 실패 + 클라우드 폴백도 꺼져 있음 — '
-            + `이 기기들은 지금 제어되지 않습니다(홈 앱에 '응답 없음'). `
+            + `이 기기들은 지금 조작할 수 없습니다(홈 앱에 '응답 없음'). `
             + `설정의 '로컬 실패 시 클라우드 사용'을 켜면 클라우드로 동작합니다: ${e.message}`);
         }
       }
@@ -447,8 +453,41 @@ class SmartThingsKM81Platform {
   _scheduleLocalIdRetry(pending, attempt = 1) {
     if (this._stopped || attempt > LOCAL_ID_RETRY_MAX) {
       if (attempt > LOCAL_ID_RETRY_MAX) {
-        this.log.error(`로컬 deviceId 확인을 ${LOCAL_ID_RETRY_MAX}회 시도했지만 실패했습니다 — `
-          + '기기 전원·IP·파이썬 의존성 설치 로그를 확인한 뒤 홈브릿지를 재시작하세요.');
+        // ★★2026-08-03 — 포기하기 전에 **캐시 액세서리의 deviceId를 3차 소스로 쓴다**
+        //   (적대 리뷰 A-M2). 지금까지는 `discovered.json`이 유실된 채 기기가 6.5분 이상
+        //   무응답이면(플러그 뽑힘·차단기·계절 보관) 그 기기가 **재시작 전까지 영영**
+        //   안 붙었다 — 기기가 나중에 살아나도 아무도 다시 묻지 않는다.
+        //   클라우드 검색 실패에는 정확히 이 용도의 `_bindFromCacheOffline`이 있는데,
+        //   로컬 프로브 실패에는 대응물이 없었다.
+        //   ⚠️신원 대조가 첫 요청에서 어차피 잡으므로, 잘못된 deviceId로 붙어도 안전하다.
+        const rescued = [];
+        for (const d of pending) {
+          if (d.deviceId || d.__km81RetryBound) continue;
+          const target = normalizeKorean(d.deviceLabel || '');
+          const host = String(d.local?.host || '').trim();
+          const cached = this.accessories.find((a) => {
+            const cd = a.context?.configDevice;
+            if (!a.context?.device?.deviceId) return false;
+            if (host && String(cd?.local?.host || '').trim() === host) return true;
+            return !!target && normalizeKorean(cd?.deviceLabel || '') === target;
+          });
+          if (!cached) continue;
+          d.deviceId = cached.context.device.deviceId;
+          d.__km81LocalId = true;
+          d.__km81RetryBound = true;
+          if (this.smartthings) this.smartthings.registerDeviceLabel(d.deviceId, labelOf(d));
+          this._bindSmartThingsDevice({ deviceId: d.deviceId, label: labelOf(d) }, d);
+          rescued.push(labelOf(d));
+        }
+        if (rescued.length > 0) {
+          this.log.warn(`기기에 물어보지 못해 지난 부팅 정보로 연결합니다: ${rescued.join(', ')} `
+            + '— 기기가 켜지면 자동으로 정상 동작합니다.');
+        }
+        const stillLost = pending.filter((d) => !d.deviceId);
+        if (stillLost.length > 0) {
+          this.log.error(`로컬 deviceId 확인을 ${LOCAL_ID_RETRY_MAX}회 시도했지만 실패했습니다 — `
+            + '기기 전원·IP·파이썬 의존성 설치 로그를 확인한 뒤 홈브릿지를 재시작하세요.');
+        }
       }
       return;
     }
@@ -464,6 +503,23 @@ class SmartThingsKM81Platform {
           try { await this._probeOne(d); } catch (_) { /* 다음 회차 */ }
         }));
       }
+      // ★★2026-08-03 — 부팅 경로의 **중복 deviceId 검사가 여기 없었다**(적대 리뷰 A-M3).
+      //   같은 IP를 두 항목에 적었을 때, 부팅 때 기기가 켜져 있으면 error로 잡히지만
+      //   꺼져 있다가 재시도 중 켜지면 둘 다 같은 di를 배워 **같은 UUID에 두 번 바인딩**된다
+      //   (뒤가 앞을 덮고, 경고는 0줄). v2.7.3의 "부팅 경로와 같은 조건식" 원칙이
+      //   이 검사에는 전파되지 않았다 — 같은 종류의 누락이 이걸로 세 번째다.
+      {
+        const seenIds = new Map();
+        for (const d of pending) {
+          if (!d.deviceId) continue;
+          const prev = seenIds.get(d.deviceId);
+          if (prev) {
+            this.log.error(`[${labelOf(d)}]와 [${labelOf(prev)}]가 같은 기기를 가리킵니다`
+              + ` (deviceId 동일). 기기 IP가 서로 다른지 확인하세요 — 그대로 두면 한 대만 남습니다.`);
+          } else seenIds.set(d.deviceId, d);
+        }
+      }
+
       for (const d of pending) {
         if (!d.deviceId || d.__km81RetryBound) continue;
         d.__km81RetryBound = true;
@@ -609,9 +665,14 @@ class SmartThingsKM81Platform {
       if (ok) this.log.info('SmartThings 재검색 성공 — 클라우드 경로가 복구되었습니다.');
       else this._scheduleRediscovery(stDevices, attempt + 1);
     }, delay);
-    this.registerShutdown(() => {
-      if (this._rediscoverTimer) clearTimeout(this._rediscoverTimer);
-    });
+    // ★핸들러는 **한 번만** 등록한다(적대 리뷰 A-L2). 예전엔 시도마다 새 클로저를 push해
+    //   재검색이 계속 실패하는 동안 하루 144개씩 무한히 쌓였다.
+    if (!this._rediscoverShutdownHooked) {
+      this._rediscoverShutdownHooked = true;
+      this.registerShutdown(() => {
+        if (this._rediscoverTimer) clearTimeout(this._rediscoverTimer);
+      });
+    }
   }
 
   _setupLegacyAc(configDevice) {
@@ -903,19 +964,52 @@ class SmartThingsKM81Platform {
     //   여기서 **영구 삭제**된다 — 홈킷 방·장면·자동화 배치가 통째로 날아간다.
     //   삭제는 되돌릴 수 없고 남겨두는 건 되돌릴 수 있다. 그래서 남긴다.
     //   ⚠️설정에서 기기를 **빼거나 이름을 바꾸면** 이름이 사라지므로 종전대로 지워진다.
+    //   ★★2026-08-03 2차 — **이름이 아니라 기기 IP(host)로 지킨다**(적대 리뷰 H1-a).
+    //     이름으로 지키면 우리가 권장하는 구성(라벨을 비우고 IP만 적기)에서 **정의상 무력**했다.
+    //     `_probeOne`이 기기가 알려준 이름을 `deviceLabel`에 **채워 넣기 때문**이다 —
+    //     남의 기기가 그 IP에 앉으면 config 라벨 자체가 **그 남의 이름**이 되고, 원래
+    //     액세서리의 라벨과는 영영 안 맞는다. 즉 v2.11.0이 막았다고 한 바로 그 시나리오가
+    //     그대로 열려 있었다. **host는 프로브가 덮지 않으므로** 그 함정이 없다.
+    //     ⚠️이름도 계속 본다 — 로컬이 아닌(클라우드) 기기는 host가 없다.
     const configLabels = new Set(
       (this.devices || []).map(d => normalizeKorean(d?.deviceLabel || '')).filter(Boolean));
+    const configHosts = new Set(
+      (this.devices || []).map(d => String(d?.local?.host || '').trim()).filter(Boolean));
+    const keyOf = (a) => {
+      const cd = a.context?.configDevice;
+      return {
+        label: normalizeKorean(cd?.deviceLabel || ''),
+        host: String(cd?.local?.host || '').trim(),
+        deviceId: a.context?.device?.deviceId || '',
+      };
+    };
+    // 1차 — 설정이 여전히 가리키는 기기인가(host 우선, 없으면 이름).
     const kept = [];
-    const stale = this.accessories.filter(a => {
+    const keptDeviceIds = new Set();
+    let stale = this.accessories.filter((a) => {
       if (this.activeUUIDs.has(a.UUID)) return false;
-      const label = normalizeKorean(a.context?.configDevice?.deviceLabel || '');
-      if (label && configLabels.has(label)) { kept.push(a); return false; }
+      const k = keyOf(a);
+      if ((k.host && configHosts.has(k.host)) || (k.label && configLabels.has(k.label))) {
+        kept.push(a);
+        if (k.deviceId) keptDeviceIds.add(k.deviceId);
+        return false;
+      }
       return true;
     });
+    // 2차 — ★남긴 기기의 **서브 액세서리**(무풍·자동건조 스위치, 종료 알림 센서)도 함께 남긴다
+    //   (적대 리뷰 H1-b). 이들은 `context.configDevice`가 없어 1차 판정이 항상 빈 문자열이라,
+    //   본체는 살고 **스위치만 영구 삭제**됐다 — 그 스위치에 걸린 자동화·방 배치가 날아간다.
+    if (keptDeviceIds.size > 0) {
+      stale = stale.filter((a) => {
+        const id = a.context?.device?.deviceId;
+        if (id && keptDeviceIds.has(id)) { kept.push(a); return false; }
+        return true;
+      });
+    }
     for (const a of kept) {
-      this.log.warn(`[${a.displayName}] 설정에 같은 이름이 남아 있어 ★지우지 않았습니다 — `
+      this.log.warn(`[${a.displayName}] 설정이 아직 이 기기를 가리키고 있어 ★지우지 않았습니다 — `
         + '기기의 deviceId가 지난 부팅과 달라졌습니다. 기기 IP가 맞는지 확인하세요. '
-        + '기기를 정말 교체했다면 설정에서 이 이름을 지웠다가 다시 넣으면 정리됩니다.');
+        + '기기를 정말 교체했다면 설정에서 이 항목을 지웠다가 다시 넣으면 정리됩니다.');
     }
 
     if (stale.length > 0) {

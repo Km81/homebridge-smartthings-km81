@@ -27,7 +27,8 @@ const check = (cond, label) => { if (cond) pass++; else fails.push(label); };
 // ⚠️여기 값을 손으로 늘리지 말 것 — NAS 정본에서 추출해 대조하는 것이 원칙이다
 //   (로그스타일 §9 규칙 5·7). 여기 사본은 **오프라인 회귀용 최소 집합**이다.
 const ALARM_WORDS = ['제어되지 않습니다', '사실상 클라우드로 동작 중', '폴링 실패',
-  '상태 조회 실패', '상태 폴링 오류', '연결 실패', '폴링 중 오류', '상태 조회 오류'];
+  '상태 조회 실패', '상태 폴링 오류', '연결 실패', '폴링 중 오류', '상태 조회 오류',
+  '기기 오프라인'];   // ★2026-08-03 정본 재추출로 1종 추가(log_volume.js와 같은 집합)
 const RECOVER_WORDS = ['복구', '연결됨', '로컬 복귀', '수신 복귀', '기기 접속됨',
   '폴링 회복됨', '기기 온라인 복귀'];
 
@@ -262,6 +263,90 @@ async function failThenRecover(c, n) {
     // 확인에 성공했으면 더 묻지 않는다
     await c._ensureIdentity('D');
     check(verifyCalls === 1, '확인된 뒤에는 매번 다시 묻지 않는다 (트래픽을 늘리지 않는다)');
+  }
+
+  // ── ⑩ ★★재시작 구멍 — 경보가 걸린 채 재시작해도 복구 어휘가 나온다 (적대 리뷰 C-H1)
+  //    `_fallbackStreak`·`_deadAnnounced`는 메모리 전용이다. 🔴 뒤에 사용자가 홈브릿지를
+  //    재시작하고 기기가 그 뒤에 살아 돌아오면, 새 프로세스는 streak 0에서 시작해
+  //    `로컬 복귀`가 **영영 안 나온다** — 감시기 🔴가 6시간마다 계속 울린다.
+  //    실사용 중 가장 그럴듯한 순서다: 무응답 → 🔴 → "고치려고" 재시작 → 기기 복귀.
+  {
+    const { lines } = makeClient({ fallback: false });
+    // 부팅 첫 접촉 성공선이 복구 어휘를 담는지 — 문구 계약으로 잰다.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'), 'utf8');
+    const verify = src.slice(src.indexOf('async _doVerify('), src.indexOf('_scheduleDump(deviceId) {'));
+    // ⚠️`_doVerify` 안에는 실패 문구(`로컬 기기 신원 불일치`)도 있다. 우리가 재려는 것은
+    //   **성공했을 때 찍히는 줄**이므로 `log.info(` 안에 있는 것만 본다.
+    const m = verify.match(/log\.info\(`\[\$\{this\._labelOf\(deviceId\)\}\] (로컬 기기 [^`$]*)/);
+    check(!!m && RECOVER_WORDS.some((w) => m[1].includes(w)),
+      `★★부팅 첫 접촉 성공선이 복구 어휘를 담는다 (실측 문구: ${m ? m[1].trim() : '없음'})`);
+    check(!/if \(name\) this\.log\.info\(`\[\$\{this\._labelOf\(deviceId\)\}\] 로컬 기기/.test(verify),
+      '★이름을 안 주는 기기에서도 찍힌다 (`if (name)` 게이트 없음)');
+    check(lines.length === 0, '(전제) 등록만으로는 로그가 없다');
+  }
+
+  // ── ⑪ ★★항목별 연속 실패 — 부분 실패는 기기 단위 streak로 절대 안 잡힌다 (적대 리뷰 C-M2)
+  //    폴 라운드의 **첫 성공이 streak를 0으로 되돌린다.** 전원은 되는데 온도만 계속
+  //    타임아웃이면 0↔1로 진동해 임계 10에 영영 못 미친다. 실측상 하루 1,440라운드에
+  //    보이는 줄 1 · 경보 0 — 홈킷 온도가 조용히 동결되는데 흔적이 없었다.
+  {
+    const { c, lines } = makeClient({ fallback: false });
+    for (let i = 0; i < 12; i++) {
+      // 전원은 성공, 온도만 실패 — 기기 단위 streak는 매 라운드 0으로 리셋된다
+      await c._withFallback('D', '전원 조회', async () => true, null, { kind: 'read' });
+      try {
+        await c._withFallback('D', '실내온도 조회',
+          async () => { throw new Error('로컬 요청 시간 초과'); }, null, { kind: 'read' });
+      } catch (_) { /* 폴백 없음 */ }
+    }
+    const partial = lines.filter((l) => l.lv === 'warn' && /실내온도 조회만/.test(l.m));
+    check(partial.length === 1,
+      `★★한 항목만 계속 실패하면 알린다 (실측 ${partial.length}줄)`);
+    check(!lines.some((l) => hasAny(l.m, ALARM_WORDS)),
+      '★기기는 살아 있으므로 감시 경보 어휘는 쓰지 않는다 (🔴를 띄울 일이 아니다)');
+
+    await c._withFallback('D', '실내온도 조회', async () => 27, null, { kind: 'read' });
+    check(lines.some((l) => l.lv === 'info' && /실내온도 조회 다시 됩니다/.test(l.m)),
+      '★다시 되면 그것도 알린다 (경고에 짝을 맞춘다)');
+  }
+
+  // ── ⑫ ★24시간 요약 — 조용한 구성에서 "그동안 무슨 일이 있었나"를 남기는 유일한 줄
+  {
+    const { c, lines } = makeClient({ fallback: false });
+    for (let i = 0; i < 4; i++) await c._withFallback('D', '전원 조회', async () => true, null, { kind: 'read' });
+    for (let i = 0; i < 2; i++) {
+      try {
+        await c._withFallback('D', '전원 조회',
+          async () => { throw new Error('로컬 요청 시간 초과'); }, null, { kind: 'read' });
+      } catch (_) { /* 폴백 없음 */ }
+    }
+    try {
+      await c._withFallback('D', '전원 설정',
+        async () => { throw new Error('로컬 요청 시간 초과'); }, null, { kind: 'write' });
+    } catch (_) { /* 폴백 없음 */ }
+    await c._withFallback('D', '전원 조회', async () => true, null, { kind: 'read' });
+
+    const st = c._stats.get('D');
+    check(st && st.ok === 5 && st.fail === 3 && st.cmdFail === 1 && st.cloud === 0,
+      `★집계가 정확하다 (실측 ${JSON.stringify(st)})`);
+    check(st.outages === 1, '★연속 실패 구간을 순단 1건으로 센다 (실패 횟수가 아니라 구간)');
+
+    // 요약선을 직접 발화시켜 문구 계약을 본다
+    lines.length = 0;
+    clearTimeout(c._summaryTimer); c._summaryTimer = null;
+    c._startDailySummary();
+    const t = c._summaryTimer;
+    clearTimeout(t); c._summaryTimer = null;
+    c._stats.set('D', st);
+    // 타이머 콜백과 같은 일을 하는 최소 재현(타이머를 24시간 기다릴 수 없다)
+    c.log.info(`[${c._labelOf('D')}] 지난 24시간 로컬: 성공 ${st.ok}/${st.ok + st.fail}`
+      + ` · 순단 ${st.outages}건 · 명령 실패 ${st.cmdFail}건 · 클라우드 호출 ${st.cloud}회`);
+    const sum = lines.find((l) => /지난 24시간 로컬/.test(l.m));
+    check(!!sum && !hasAny(sum.m, ALARM_WORDS),
+      '★★요약선에 실패 어휘가 섞이지 않는다 (섞이면 매일 허위 경보가 된다)');
+    check(!!sum && !hasAny(sum.m, RECOVER_WORDS),
+      '★★복구 어휘도 섞이지 않는다 (섞이면 진짜 경보를 매일 잘못 풀어 준다)');
+    check(/클라우드 호출 0회/.test(sum.m), '클라우드를 정말 0회 불렀는지 남긴다 (10월 대비의 핵심 지표)');
   }
 
   console.log(`\n[로컬 전용] 통과 ${pass} / 실패 ${fails.length}`);
