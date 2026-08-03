@@ -349,6 +349,54 @@ async function failThenRecover(c, n) {
     check(/클라우드 호출 0회/.test(sum.m), '클라우드를 정말 0회 불렀는지 남긴다 (10월 대비의 핵심 지표)');
   }
 
+  // ── ⑬ ★★라벨 없는 줄에 실패 어휘를 넣지 않는다 (적대 리뷰 C-L1 검증에서 굳힌 계약)
+  //    hb_watch의 추출 정규식은 `^\[날짜, 시각\].*\[([^]]+)\] .*(어휘)` 라, 기기 라벨이 없는
+  //    줄에서는 **플러그인 이름(`SmartThings KM81`)을 기기 키로 뽑는다** — 유령 기기다.
+  //    ★현재 안전한 이유는 그 유령 키로 **걸리는 실패 줄이 하나도 없기** 때문이다
+  //    (라벨 없는 복구 어휘는 부팅마다 3줄 나오지만, 풀 경보가 없으니 무해하다).
+  //    ⚠️즉 이건 **조건부 안전**이다. 라벨 없는 실패 줄을 하나라도 만드는 순간,
+  //      그 유령 기기에 🔴가 걸리고 부팅 때마다 나오는 복구 3줄이 그걸 풀었다 걸었다 한다.
+  //      그래서 "없다"를 계약으로 박아 둔다.
+  {
+    const files = ['index.js', 'lib/api/LocalApplianceClient.js', 'lib/api/LegacyACClient.js',
+      'lib/api/LegacyLaundryClient.js', 'lib/accessories/SmartAC.js', 'lib/accessories/LegacyAC.js',
+      'lib/accessories/Laundry.js', 'lib/mqtt/MqttBridge.js', 'lib/mqtt/attach.js'];
+    // ⚠️**여러 줄에 걸친 로그문**까지 봐야 한다. 처음엔 `this.log.x(`가 있는 한 줄만 봤는데,
+    //   실제 위반(v2.11.3의 설치 안내)은 어휘가 **다음 줄의 삼항 연산자 안**에 있어서
+    //   그대로 통과했다 — 잡아야 할 바로 그 형태를 놓치는 계측기였다.
+    const offenders = [];
+    for (const f of files) {
+      const full = path.join(__dirname, '..', f);
+      if (!fs.existsSync(full)) continue;
+      const src = fs.readFileSync(full, 'utf8');
+      const re = /this\.log\.(?:info|warn|error)\(/g;
+      let m;
+      while ((m = re.exec(src)) !== null) {
+        const from = m.index + m[0].length;
+        const end = src.indexOf(');', from);           // 문장 끝까지를 한 덩어리로
+        const raw = src.slice(from, end === -1 ? from + 600 : end);
+        // ⚠️주석을 걷어낸다 — 이 저장소는 "왜 이 어휘를 쓰면 안 되는가"를 **바로 그 자리에
+        //   주석으로** 적는 문화라, 안 걷어내면 설명이 위반으로 잡힌다(실제로 2건 오탐했다).
+        // ⚠️★`.*`를 쓰면 **안 된다** — 이 저장소는 CRLF이고 JS 정규식의 `.`는 `\r`를
+        //   line terminator로 보고 **먹지 않는다.** 그래서 주석이 하나도 안 지워지는데
+        //   테스트는 조용히 "위반 있음"만 말한다(실제로 여기서 30분 헤맸다).
+        const stmt = raw.replace(/\/\/[^\r\n]*/g, '');
+        if (!hasAny(stmt, ALARM_WORDS)) continue;
+        // ★재는 것은 "**방출되는 줄의 맨 앞**에 라벨이 있는가" 하나다.
+        //   hb_watch의 추출은 greedy(`.*\[([^]]+)\]`)라, 줄이 `[기기라벨]`로 시작하면
+        //   어휘가 뒤쪽 어느 조각에 있든 그 기기로 정확히 귀속된다.
+        //   ⚠️'어휘가 든 조각마다 라벨을 요구'하면 과하다 — 이어붙인 뒷조각(` — … 제어되지
+        //     않습니다.`)까지 위반으로 잡혀 멀쩡한 코드가 걸린다(실제로 오탐했다).
+        //   삼항 로그(`log.error(cond ? '[..]' : '[..]')`)도 첫 리터럴이 곧 줄의 앞이다.
+        const first = (stmt.match(/(?:`|')/) || {}).index;
+        if (first !== undefined && stmt.slice(first + 1).startsWith('[$')) continue;
+        offenders.push(`${f}:${src.slice(0, m.index).split('\n').length}`);
+      }
+    }
+    check(offenders.length === 0,
+      `★★실패 어휘가 든 줄은 반드시 [기기라벨]로 시작한다 (위반: ${offenders.join(', ') || '없음'})`);
+  }
+
   console.log(`\n[로컬 전용] 통과 ${pass} / 실패 ${fails.length}`);
   for (const f of fails) console.log(`  ✗ ${f}`);
   process.exit(fails.length ? 1 : 0);
