@@ -154,6 +154,45 @@ function makeClient(rpcImpl) {
     check(total < 40000, `실기기 규모 로그량이 과하지 않다 (실측 ${total}자)`);
   }
 
+  // ── ⑨ ★★덤프가 **부팅 임계 경로를 막지 않는다** (2026-08-03 slow-to-respond 실사고)
+  //    `_doVerify`가 덤프를 `await` 하면 이 왕복(8,800자)이 **모든 첫 읽기 앞을 막는다.**
+  //    콜드 부팅에 홈킷이 특성 6개를 한꺼번에 읽으러 오는데 기기당 요청이 한 줄로 서 있어
+  //    포트 탐지 → 신원 확인 → 덤프 뒤에야 첫 답이 나갔다(실측 ~7초, 홈브릿지 임계 3초).
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api', 'LocalApplianceClient.js'), 'utf8');
+    const verify = src.slice(src.indexOf('async _doVerify('), src.indexOf('_scheduleDump(deviceId) {'));
+    check(!/await this\._dumpResourcesOnce\(/.test(verify),
+      '★★신원 확인이 덤프를 기다리지 않는다 (기다리면 모든 첫 읽기가 그만큼 늦는다)');
+    check(/this\._scheduleDump\(deviceId\);/.test(verify), '대신 부팅 뒤로 예약한다');
+
+    // ⛔직렬화 밖으로 나가면 안 된다 — 기기당 DTLS 세션이 1개뿐이다.
+    const sched = src.slice(src.indexOf('_scheduleDump(deviceId) {'), src.indexOf('_scheduleDump(deviceId) {') + 700);
+    check(/this\._serialize\(deviceId,[\s\S]*_dumpResourcesOnce/.test(sched),
+      '★예약된 덤프도 직렬화 큐를 탄다 (세션 충돌 방지)');
+    check(/clearTimeout\(t\)/.test(src.slice(src.indexOf('  stop() {'), src.indexOf('  stop() {') + 300)),
+      '종료 시 예약 타이머를 정리한다');
+  }
+
+  // ── ⑩ 예약이 실제로 미뤄지고, 미뤄진 뒤에는 정확히 한 번 돈다
+  {
+    const { c, lines } = makeClient(async () => ({ code: 69, data: BATCH, port: 49154 }));
+    const timers = [];
+    const realST = global.setTimeout;
+    global.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; };
+    try {
+      c._scheduleDump('D');
+      check(lines.length === 0, '★예약 직후에는 아무 왕복도 일어나지 않는다 (부팅이 안 막힌다)');
+      check(timers.length === 1 && timers[0].ms >= 30000,
+        `충분히 뒤로 미룬다 (실측 ${timers[0]?.ms}ms)`);
+      c._scheduleDump('D');
+      check(timers.length === 1, '중복 예약하지 않는다');
+    } finally { global.setTimeout = realST; }
+
+    await timers[0].fn();
+    await new Promise((r) => realST(r, 20));
+    check(lines.length > 0, '★예약 시간이 되면 실제로 남긴다 (미루는 것이지 버리는 것이 아니다)');
+  }
+
   console.log(`\n[기기 기능 목록 덤프] 통과 ${pass} / 실패 ${fails.length}`);
   for (const f of fails) console.log(`  ✗ ${f}`);
   process.exit(fails.length ? 1 : 0);
