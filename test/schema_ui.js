@@ -285,5 +285,38 @@ check(HINT.test(hostTitle), `'local.host' 제목에 필수 여부 안내가 있�
   }
 }
 
+// ── ★★코드가 읽는 기기 설정 키는 **전부 스키마에 있어야 한다** (2026-08-04 실사고) ──
+//
+// 8/2 심야에 HA 엔티티가 두 벌이 된 사고의 근본 원인이 이것이었다:
+// `mqttSlug`를 코드(`index.js:_mqttSlug`)는 읽는데 **스키마에 없었다.**
+// 홈브릿지 UI는 설정을 저장할 때 **스키마에 없는 키를 소거한다** → 사용자가 UI에서
+// 아무 항목이나 한 번 저장하면 mqttSlug가 사라지고, 토픽이 `seungjun_ac` → `smartac`으로
+// 바뀌어 **HA에 엔티티가 두 벌** 생겼다. 옛 엔티티는 retained 마지막 값에 얼어붙었고,
+// 자동화가 그걸 계속 보고 커튼을 되돌렸다.
+//
+// ⚠️증상이 "UI를 만졌더니 며칠 뒤 자동화가 이상해진다"라 원인 추적이 매우 어렵다.
+//   그래서 사람 기억이 아니라 **기계가** 지키게 한다.
+{
+  const fs2 = require('fs');
+  const path2 = require('path');
+  const idx = fs2.readFileSync(path2.join(__dirname, '..', 'index.js'), 'utf8');
+  const props = SCHEMA.properties.devices.items.properties;
+
+  // `configDevice.<키>` 로 읽는 것을 소스에서 추출한다(손으로 옮겨 적지 않는다).
+  const used = new Set();
+  for (const m of idx.matchAll(/\bconfigDevice\.([a-zA-Z][a-zA-Z0-9]*)/g)) used.add(m[1]);
+
+  // 설정 키가 아닌 것(런타임 표식·내부 필드)은 제외한다.
+  const NOT_CONFIG = new Set(['transport', 'local', 'deviceType', 'deviceId']);
+  const missing = [...used].filter((k) => !NOT_CONFIG.has(k) && !k.startsWith('__km81') && !props[k]);
+  check(missing.length === 0,
+    `★코드가 읽는 설정 키가 전부 스키마에 있다 (없으면 UI 저장 시 소거된다) — 누락: ${missing.join(', ') || '없음'}`);
+
+  // mqttSlug 는 그 사고의 당사자라 이름을 박아 둔다.
+  check(!!props.mqttSlug, '★★mqttSlug 가 스키마에 있다 (8/2 유령 엔티티 사고의 근본 원인)');
+  check(JSON.stringify(schemaFile.layout || []).includes('devices[].mqttSlug'),
+    '★mqttSlug 가 layout 에도 있다 (스키마만 고치면 화면이 안 바뀐다)');
+}
+
 console.log(fail.length ? `\n❌ ${fail.length}건 실패` : '\n✅ 전부 통과');
 process.exit(fail.length ? 1 : 0);

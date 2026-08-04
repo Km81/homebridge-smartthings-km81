@@ -9,7 +9,7 @@ const SmartAC = require('./lib/accessories/SmartAC');
 const Laundry = require('./lib/accessories/Laundry');
 const LegacyLaundryClient = require('./lib/api/LegacyLaundryClient');
 const MqttBridge = require('./lib/mqtt/MqttBridge');
-const { attachSmartAc, attachLaundry } = require('./lib/mqtt/attach');
+const { attachSmartAc, attachLaundry, attachWaterPurifier } = require('./lib/mqtt/attach');
 const path = require('path');
 
 const PLATFORM_NAME = 'SmartThingsKM81';
@@ -193,7 +193,7 @@ class SmartThingsKM81Platform {
     //   캐시에 남아 있던 액세서리가 stale로 판정돼 **경고 한 줄 없이 영구 삭제**된다
     //   (사용자 자동화·방 배치 동반 소실). 오타나, 새 종류를 쓰던 설정을 구버전으로
     //   되돌린 경우에 실제로 일어난다. 종류를 모를 때는 지우지 않는 것이 안전하다.
-    const KNOWN_TYPES = ['legacyAc', 'smartAc', 'washer', 'dryer'];
+    const KNOWN_TYPES = ['legacyAc', 'smartAc', 'washer', 'dryer', 'waterPurifier'];
     // 로그에는 **사용자가 고른 이름**을 보여 준다. 정규화된 내부명만 찍으면
     // "시스템 에어컨을 골랐는지"를 로그로 판별할 수 없어 진단이 막힌다(실사례).
     this._shownType = (d) => (d && d.__km81SystemAc ? 'systemAc' : d && d.deviceType);
@@ -213,6 +213,9 @@ class SmartThingsKM81Platform {
       this._setupLegacyAc(dev);
     }
 
+    // 1-b) 정수기 — ★홈킷 액세서리를 만들지 않는다. HA(MQTT)로만 흘린다(2026-08-04).
+    //   ⚠️브릿지 기동 뒤에 붙여야 하므로 실제 시작은 아래 2-a 이후에 한다.
+
     // 2) SmartThings 장치 처리
     const stDevices = this.devices.filter(d =>
       d?.deviceType === 'smartAc' || d?.deviceType === 'washer' || d?.deviceType === 'dryer'
@@ -222,7 +225,13 @@ class SmartThingsKM81Platform {
     // 실패해도 치명적이지 않다 — 각 기기는 클라우드로 폴백한다.
     // ★8888 토큰 기기는 파이썬 DTLS 브릿지가 필요 없다 — 이걸 빼지 않으면 세탁기 하나 때문에
     // pip 설치(최대 180초)와 기동 대기가 헛돈다(적대 감사 D4).
-    const localDevices = stDevices.filter(d => d?.transport === 'local' && !d?.local?.token);
+    // ★정수기도 같은 DTLS 스택을 쓴다 — 브릿지 기동 대상에 포함해야 한다(2026-08-04).
+    //   ⚠️단 stDevices 에는 넣지 않는다: 그러면 홈킷 액세서리가 만들어진다.
+    const purifiers = this.devices.filter(d => d?.deviceType === 'waterPurifier' && d?.local?.host);
+    const localDevices = [
+      ...stDevices.filter(d => d?.transport === 'local' && !d?.local?.token),
+      ...purifiers,
+    ];
     if (localDevices.length > 0) {
       this.localClient = new LocalApplianceClient(this.log, {
         cloudClient: this.smartthings,
@@ -284,6 +293,15 @@ class SmartThingsKM81Platform {
             + `설정의 '로컬 실패 시 클라우드 사용'을 켜면 클라우드로 동작합니다: ${e.message}`);
         }
       }
+    }
+
+    // 1-b 실행) 정수기 — 브릿지 기동 뒤에 붙인다(홈킷 액세서리 없음, HA 전용).
+    //   ⚠️`await` 하지 않는다: 기기가 꺼져 있으면 신원 조회가 수 초 걸리는데, 그동안
+    //     아래의 토큰 로드·기기 바인딩이 밀리면 안 된다(무성 유실을 만든 그 부류).
+    for (const d of purifiers) {
+      this._setupWaterPurifier(d).catch((e) => {
+        this.log.warn(`[${d.deviceLabel || '정수기'}] 준비 실패(무해): ${e && e.message}`);
+      });
     }
 
     // ★init()은 '디스크의 토큰을 읽는' 단계이지 API 호출이 아니다. deviceId로 전부 연결됐다고
@@ -672,6 +690,63 @@ class SmartThingsKM81Platform {
       this.registerShutdown(() => {
         if (this._rediscoverTimer) clearTimeout(this._rediscoverTimer);
       });
+    }
+  }
+
+  // ── 정수기 (2026-08-04) ──────────────────────────────────────────────────
+  //
+  // ★홈킷 액세서리를 만들지 않는다. 그래서 `_bindSmartThingsDevice` 를 타지 않고
+  //   여기서 직접 신원 조회 → 로컬 등록 → MQTT 폴러만 붙인다.
+  //   ⚠️`KNOWN_TYPES` 에 반드시 들어 있어야 한다 — 빠지면 `_unknownTypes` 가 켜져
+  //     **오래된 액세서리 정리가 통째로 멈춘다**(2026-08-03 에 다룬 그 경로).
+  async _setupWaterPurifier(configDevice) {
+    const label = configDevice.deviceLabel || '정수기';
+    const host = configDevice.local && configDevice.local.host;
+    if (!host) {
+      this.log.warn(`[${label}] 기기 IP가 없어 건너뜁니다 — 정수기는 로컬 전용입니다.`);
+      return;
+    }
+    if (!this.localClient) {
+      this.log.warn(`[${label}] 로컬 브릿지가 준비되지 않아 이번 부팅에는 연결하지 못했습니다.`);
+      return;
+    }
+    if (!this.mqtt || !this.mqtt.enabled) {
+      // 홈킷에 안 올리므로 MQTT 가 없으면 이 기기는 **아무 데도 안 나간다** — 알려 준다.
+      this.log.warn(`[${label}] MQTT가 꺼져 있어 중계하지 않습니다 `
+        + '(정수기는 홈킷 액세서리를 만들지 않으므로 MQTT가 유일한 출구입니다).');
+      return;
+    }
+
+    let deviceId = configDevice.deviceId;
+    let name = null;
+    if (!deviceId) {
+      try {
+        const found = await this.localClient.probeIdentity(host, configDevice.local.port);
+        deviceId = found.deviceId;
+        name = found.name || null;
+      } catch (e) {
+        this.log.warn(`[${label}] ${host}의 deviceId를 확인하지 못했습니다 — 기기 전원과 IP를 확인하세요: ${e.message}`);
+        return;
+      }
+    }
+
+    this.localClient.registerDevice(deviceId, {
+      host,
+      port: configDevice.local.port ? Number(configDevice.local.port) : undefined,
+      label,
+      kind: 'waterPurifier',
+      fallbackToCloud: false,   // 정수기는 클라우드 경로를 아예 두지 않는다
+    });
+    this.log.info(`[${label}] 로컬 연결${name ? ` — ${name}` : ''} (홈킷 액세서리 없음 · HA로만 중계)`);
+
+    try {
+      attachWaterPurifier({
+        bridge: this.mqtt, log: this.log, client: this.localClient,
+        deviceId, configDevice, slug: this._mqttSlug(configDevice, deviceId),
+        label, platform: this,
+      });
+    } catch (e) {
+      this.log.warn(`[${label}] MQTT 중계 준비 실패(무해): ${e.message}`);
     }
   }
 

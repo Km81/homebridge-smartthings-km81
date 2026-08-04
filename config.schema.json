@@ -78,6 +78,12 @@
                   "enum": [
                     "dryer"
                   ]
+                },
+                {
+                  "title": "정수기 (홈킷에 안 뜸 — HA로만 중계)",
+                  "enum": [
+                    "waterPurifier"
+                  ]
                 }
               ],
               "required": true,
@@ -445,6 +451,21 @@
               "default": 30,
               "minimum": 5,
               "description": "운전 종료를 감지하는 확인 주기."
+            },
+            "mqttSlug": {
+              "title": "MQTT 토픽 이름",
+              "type": "string",
+              "required": false,
+              "description": "HA 중계 토픽에 쓸 이름입니다. 비우면 기기 종류(smartac·washer·dryer)를 씁니다. ⚠️한 번 정하면 바꾸지 마세요 — 토픽이 바뀌면 HA에 **엔티티가 두 벌** 생기고, 옛 엔티티는 마지막 값에 얼어붙은 채 자동화가 그걸 계속 봅니다(2026-08-02 실사고).",
+              "placeholder": "seungjun_ac",
+              "pattern": "^[a-z0-9_]+$"
+            },
+            "mqttExpose": {
+              "title": "HA(MQTT)로 중계",
+              "type": "boolean",
+              "default": true,
+              "required": false,
+              "description": "끄면 이 기기를 Home Assistant 로 중계하지 않습니다(홈킷에는 그대로 남습니다). 기본은 켬입니다."
             },
             "transport": {
               "title": "[SmartThings] 전송 경로",
@@ -1151,6 +1172,18 @@
           "key": "devices[].sensorPollInterval",
           "condition": {
             "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['washer','dryer'].includes(d.deviceType);"
+          }
+        },
+        {
+          "key": "devices[].mqttSlug",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType);"
+          }
+        },
+        {
+          "key": "devices[].mqttExpose",
+          "condition": {
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType);"
           }
         },
         {

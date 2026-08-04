@@ -250,6 +250,24 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     const pw = cfgs.find(x => x.unique_id === 'km81_dryer2_power_w');
     ok(pw && pw.device_class === 'power' && pw.state_class === 'measurement' && pw.unit_of_measurement === 'W',
       '건조기 순시전력 센서 클래스 정확');
+
+    // ★★부분 갱신이 가동 상태를 덮으면 안 된다 (2026-08-04, 티어 폴러 도입 중 발견)
+    //
+    // 느린 티어(30분: 원격제어·어린이잠금·건조강도)는 `state`를 담지 않는다. 그런데
+    // `publishLaundryState`가 `String(s.state || 'unknown')`이라, 그 부분 갱신 한 번에
+    // **가동 중인 건조기가 `알 수 없음`·`running OFF`·`남은시간 0`으로 덮였다.**
+    // ⚠️부분 갱신을 받는 함수는 **"안 온 값"과 "빈 값"을 반드시 구분해야 한다.**
+    b.publishLaundryState('dryer2', { remote_control: false, kids_lock: 'Ready', dry_level: 'Normal' });
+    const after = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/dryer2/state').pop().payload);
+    ok(after.running === 'ON' && after.status === dm.status && after.remaining_min === 109,
+      '★★state 없는 부분 갱신이 가동 상태를 덮지 않는다', JSON.stringify(after));
+    ok(after.remote_control === 'OFF' && after.kids_lock === 'Ready' && after.dry_level === 'Normal',
+      '★느린 티어 값이 함께 실린다(원격제어·어린이잠금·건조강도)', JSON.stringify(after));
+
+    // ⚠️원격제어 false 는 "HA 명령이 안 먹는다"는 뜻이라 진단 항목으로 노출한다.
+    const rc = cfgs.find(x => x.unique_id === 'km81_dryer2_remote_control');
+    ok(rc && rc.entity_category === 'diagnostic' && rc.payload_on === 'ON',
+      '원격제어 허용 센서가 진단 항목으로 등록된다');
     b.stop();
   });
 }
