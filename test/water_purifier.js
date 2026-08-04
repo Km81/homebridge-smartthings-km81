@@ -57,6 +57,11 @@ const REAL = {
     'x.com.samsung.da.buzzLock': 'Unlocked',
   },
   'selfcheck/vs/0': { 'x.com.samsung.da.status': 'Ready', 'x.com.samsung.da.result': 'Success' },
+  'favorite/capacity/vs/0': {
+    'x.com.samsung.da.switchCapacity': 'On',        // 앱의 '나만의 출수량' 토글
+    'x.com.samsung.da.defaultCapacity': '120',
+    'x.com.samsung.da.capacityList': ['120', '240', '480', '960', '9999'],
+  },
 };
 
 function makeClient({ dead = false, overrides = {} } = {}) {
@@ -112,6 +117,8 @@ function makeBridge(log) {
     check(v.sterilize_last === '2026-08-03T17:09:20Z',
       `★기기가 UTC 로 주므로 Z 를 붙인다 (안 붙이면 HA 가 9시간 어긋난다) — 실측 ${v.sterilize_last}`);
     check(v.status === 'Ready' && v.selfcheck_status === 'Ready', '상태·자가진단');
+    check(v.favorite_enabled === 'ON' && v.favorite_ml === 120,
+      `★'나만의 출수량' 토글과 값이 나간다 (실측 ${v.favorite_enabled}/${v.favorite_ml})`);
   }
 
   // ── ② ★★기기가 죽으면 티가 난다 (경보 + 복구 짝)
