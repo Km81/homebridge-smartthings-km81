@@ -210,6 +210,63 @@ function makeBridge(log) {
       '★`km81/appliance/null/state` 로 발행하지 않는다 (경고문이 거짓이 되면 안 된다)');
   }
 
+  // ── ⑥ ★★"조회 성공·값 없음"과 "조회 실패"를 구분한다 (2026-08-05, 세 번째로 밟은 함정)
+  //    둘 다 null 을 돌려주면 호출측이 undefined("안 읽음")로 바꿔 발행을 건너뛰고,
+  //    **HA 센서가 옛 값에 영구 고착**된다. 오늘만 세 번 당했다 —
+  //    `publishLaundryState` 의 `String(s.state||'unknown')`,
+  //    `alarm && alarm.code ? … : undefined`, 그리고 새 getter 3종.
+  {
+    // (a) 조회는 성공했는데 값이 없다 → **객체**(필드만 null)
+    const { c } = makeClient({ overrides: { 'favorite/capacity/vs/0': {} } });
+    const fav = await c.getFavoriteCapacity('WP');
+    check(fav !== null && fav.enabled === null,
+      `★성공·빈 값이면 객체를 돌려준다(필드만 null) — 실측 ${JSON.stringify(fav)}`);
+
+    // (b) 조회 자체가 실패 → **null**
+    const dead = makeClient({ dead: true });
+    const favDead = await dead.c.getFavoriteCapacity('WP');
+    check(favDead === null, '★조회 실패면 null — 둘이 구분된다');
+
+    // (c) 그래서 HA 에서 값이 **지워진다**(고착되지 않는다)
+    const { log } = makeClient();
+    const { b, published } = makeBridge(log);
+    b.registerWaterPurifier({ slug: 'wp2', label: '정수기' });
+    b.publishWaterPurifierState('wp2', { favorite_enabled: true, favorite_ml: 120 });
+    b.publishWaterPurifierState('wp2', { favorite_enabled: null, favorite_ml: null });
+    const last = JSON.parse(published.filter((p) => p.topic.endsWith('/wp2/state')).pop().payload);
+    check(!('favorite_enabled' in last),
+      `★★값이 사라지면 HA 에서도 지워진다 (옛 값 고착 금지) — 실측 ${JSON.stringify(last)}`);
+  }
+
+  // ── ⑦ ★`Number(null)`·`Number('')` 이 0 이 되어 "값 없음"을 진짜 0 으로 둔갑시키지 않는다
+  //    `getWaterFilter` 에는 가드를 달아 놓고 같은 날 쓴 다른 getter 에 안 달았던 것(리뷰 M-2).
+  {
+    for (const bad of [null, '']) {
+      const { c } = makeClient({
+        overrides: {
+          'favorite/capacity/vs/0': {
+            'x.com.samsung.da.switchCapacity': 'On',
+            'x.com.samsung.da.defaultCapacity': bad,
+          },
+        },
+      });
+      const fav = await c.getFavoriteCapacity('WP');
+      check(fav && fav.default_ml === null,
+        `★출수량이 ${JSON.stringify(bad)} 이면 null (0mL 아님) — 실측 ${fav && fav.default_ml}`);
+    }
+    // 대조군 — 진짜 0 은 0 으로 나가야 한다
+    const { c } = makeClient({
+      overrides: {
+        'favorite/capacity/vs/0': {
+          'x.com.samsung.da.switchCapacity': 'On',
+          'x.com.samsung.da.defaultCapacity': '0',
+        },
+      },
+    });
+    const fav = await c.getFavoriteCapacity('WP');
+    check(fav && fav.default_ml === 0, '진짜 0 은 0 으로 나간다 (대조군)');
+  }
+
   console.log(`\n[정수기] 통과 ${pass} / 실패 ${fails.length}`);
   for (const f of fails) console.log(`  ✗ ${f}`);
   process.exit(fails.length ? 1 : 0);
