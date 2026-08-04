@@ -51,6 +51,8 @@ const SUITES = [
   { file: 'port_memory.js' },
   //   cold_read   — 콜드 리드를 지난 부팅 값으로 즉답. 시드가 **거짓 동작**을 만들지 않는가.
   { file: 'cold_read.js' },
+  //   water_purifier — ★홈킷 액세서리가 없는 첫 기기. '틀렸을 때 티가 나는가'를 잰다.
+  { file: 'water_purifier.js' },
   // v2.6.10 — 첫 부팅(의존성 설치 중) 경로. LocalApplianceClient를 스텁으로 갈아끼우므로
   //           진짜 클라이언트를 쓰는 스위트와 반드시 별도 프로세스여야 한다.
   { file: 'first_boot.js' },

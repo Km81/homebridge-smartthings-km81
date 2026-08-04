@@ -230,10 +230,13 @@ class SmartThingsKM81Platform {
     // pip 설치(최대 180초)와 기동 대기가 헛돈다(적대 감사 D4).
     // ★정수기도 같은 DTLS 스택을 쓴다 — 브릿지 기동 대상에 포함해야 한다(2026-08-04).
     //   ⚠️단 stDevices 에는 넣지 않는다: 그러면 홈킷 액세서리가 만들어진다.
-    const purifiers = this.devices.filter(d => d?.deviceType === 'waterPurifier' && d?.local?.host);
+    // ⚠️★여기서 `local.host` 를 요구하면 host 없는 정수기가 **조용히 탈락**하고,
+    //   `_setupWaterPurifier` 안의 "기기 IP가 없어 건너뜁니다" 경고가 **도달 불가 사문**이 된다
+    //   (적대 리뷰 M-1). 종류로만 잡고, host 검사는 그 함수에 맡겨 **경고가 실제로 나오게** 한다.
+    const purifiers = this.devices.filter(d => d?.deviceType === 'waterPurifier');
     const localDevices = [
       ...stDevices.filter(d => d?.transport === 'local' && !d?.local?.token),
-      ...purifiers,
+      ...purifiers.filter(d => d?.local?.host),   // host 가 없으면 브릿지를 띄울 이유가 없다
     ];
     if (localDevices.length > 0) {
       this.localClient = new LocalApplianceClient(this.log, {
@@ -729,6 +732,17 @@ class SmartThingsKM81Platform {
     let deviceId = configDevice.deviceId;
     let name = null;
     if (!deviceId) {
+      // ★지난 부팅에 확인한 신원을 먼저 쓴다(적대 리뷰 M-3). 홈킷 경로(`_probeOne`)는
+      //   `readDiscovered` 를 쓰는데 정수기만 안 썼다 — 그래서 기기가 꺼진 부팅에서는
+      //   12회(≈1.5시간)를 헛돌다 **재시작 전까지 영구 미연결**이 됐다.
+      const cached = this.localClient.readDiscovered(host);
+      if (cached && cached.deviceId) {
+        deviceId = cached.deviceId;
+        name = cached.name || null;
+        this.log.debug?.(`[${label}] deviceId를 캐시에서 읽음 (${host})`);
+      }
+    }
+    if (!deviceId) {
       // ★★신원 조회는 **재시도해야 한다**(2026-08-04 실사고). 첫 시도에서 기기가 응답하지
       //   않으면(절전·전원 꺼짐·부팅 중 mDNS 미준비) 그대로 포기해 **재시작 전까지 영영**
       //   안 붙었다. 홈킷 기기 쪽에는 `_scheduleLocalIdRetry`(12회)가 있는데 여기만 없었다.
@@ -741,6 +755,7 @@ class SmartThingsKM81Platform {
           const found = await this.localClient.probeIdentity(host, configDevice.local.port, configDevice.local.localPort);
           deviceId = found.deviceId;
           name = found.name || null;
+          this.localClient.writeDiscovered(host, found);   // 다음 부팅이 이걸 쓴다
           if (attempt > 0) this.log.info(`[${label}] ${attempt + 1}회째 시도에 연결됐습니다.`);
           break;
         } catch (e) {
@@ -763,6 +778,7 @@ class SmartThingsKM81Platform {
       if (!deviceId) return;
     }
 
+    if (this._stopped) return;   // probe 비행 중 종료가 왔을 수 있다(적대 리뷰 L-3)
     this.localClient.registerDevice(deviceId, {
       host,
       port: configDevice.local.port ? Number(configDevice.local.port) : undefined,
