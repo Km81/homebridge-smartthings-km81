@@ -215,11 +215,17 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
 
     // ★§6-3 모니터링 센서 발행 검증(실측 키 기반)
     const uids = cfgs.map(x => x.unique_id);
+    ok(uids.includes('km81_seungjun_ac_mode_actual'),
+      '기기 실제 운전 모드 센서 발행(홈킷 냉방/끔으로는 제습을 표현 못 함)');
     ok(['power_w', 'energy_kwh', 'humidity', 'filter_percent'].every(k => uids.includes(`km81_seungjun_ac_${k}`)),
       '승준 에어컨 전력·에너지·습도·필터 센서 발행');
     ok(uids.includes('km81_seungjun_ac_light'), '승준 조명 스위치 발행(hasLight)');
     ok(uids.includes('km81_seungjun_ac_sound'), '승준 효과음 스위치 발행(hasSound)');
     // ★건조기(로컬)는 진행률·에너지 센서, 세탁기(8888)는 없어야 한다
+    ok(uids.includes('km81_dryer2_power_w'),
+      '건조기 순시 전력 센서 발행(로컬 getEnergy가 이미 읽던 값)');
+    ok(!uids.includes('km81_washer_power_w'),
+      '8888 세탁기는 순시 전력 미발행(getEnergy 자체가 없음)');
     ok(uids.includes('km81_dryer2_progress') && uids.includes('km81_dryer2_energy_kwh'),
       '건조기 진행률·에너지 센서 발행');
     ok(!uids.includes('km81_washer_progress') && !uids.includes('km81_washer_energy_kwh'),
@@ -230,15 +236,20 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
 
     // ★제어값+모니터링값이 한 state 토픽에 병합 발행되는가
     b.publishSmartAcState('seungjun_ac', { power: true, currentTemp: 26, coolingSetpoint: 24, windFree: false, autoClean: true });
-    b.publishSmartAcSensors('seungjun_ac', { power_w: 1200, cumulative_kwh: 114.62, humidity: 65, filter_percent: 3.6, light: true, sound: false });
+    b.publishSmartAcSensors('seungjun_ac', { power_w: 1200, cumulative_kwh: 114.62, humidity: 65, filter_percent: 3.6, light: true, sound: false, mode_actual: 'Dry' });
     const merged = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/seungjun_ac/state').pop().payload);
-    ok(merged.mode === 'cool' && merged.power_w === 1200 && merged.humidity === 65 && merged.filter_percent === 3.6 && merged.light === 'ON' && merged.sound === 'OFF',
+    ok(merged.mode === 'cool' && merged.power_w === 1200 && merged.humidity === 65 && merged.filter_percent === 3.6 && merged.light === 'ON' && merged.sound === 'OFF' && merged.mode_actual === 'Dry',
       '제어값+모니터링값 병합 발행(효과음 포함)', JSON.stringify(merged));
 
     // ★건조기 남은시간 raw는 60분 상한이 없다(HomeKit Valve 캡 회피)
-    b.publishLaundryState('dryer2', { state: 'running', remainingMin: 109, progress: 42, cumulative_kwh: 1222.6 });
+    b.publishLaundryState('dryer2', { state: 'running', remainingMin: 109, progress: 42, cumulative_kwh: 1222.6, power_w: 1840 });
     const dm = JSON.parse(c.published.filter(p => p.topic === 'km81/appliance/dryer2/state').pop().payload);
-    ok(dm.remaining_min === 109 && dm.progress === 42 && dm.energy_kwh === 1222.6, '건조기 raw 남은시간(109분)·진행률·에너지', JSON.stringify(dm));
+    ok(dm.remaining_min === 109 && dm.progress === 42 && dm.energy_kwh === 1222.6 && dm.power_w === 1840,
+      '건조기 raw 남은시간(109분)·진행률·에너지·순시전력', JSON.stringify(dm));
+    // 순시전력 센서가 에너지 대시보드용 클래스를 갖는지(누적과 혼동 금지)
+    const pw = cfgs.find(x => x.unique_id === 'km81_dryer2_power_w');
+    ok(pw && pw.device_class === 'power' && pw.state_class === 'measurement' && pw.unit_of_measurement === 'W',
+      '건조기 순시전력 센서 클래스 정확');
     b.stop();
   });
 }
