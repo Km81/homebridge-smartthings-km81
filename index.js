@@ -713,6 +713,12 @@ class SmartThingsKM81Platform {
       this.log.warn(`[${label}] 로컬 브릿지가 준비되지 않아 이번 부팅에는 연결하지 못했습니다.`);
       return;
     }
+    // ⚠️스키마 설명이 "끄면 HA 로 중계하지 않습니다"라고 약속한다 — 정수기도 지켜야 한다
+    //   (적대 리뷰 M-3: 이 검사가 `_attachMqtt` 에만 있어 정수기는 무시하고 있었다).
+    if (configDevice.mqttExpose === false) {
+      this.log.info(`[${label}] MQTT 중계를 끔(설정) — 이 기기는 어디에도 노출되지 않습니다.`);
+      return;
+    }
     if (!this.mqtt || !this.mqtt.enabled) {
       // 홈킷에 안 올리므로 MQTT 가 없으면 이 기기는 **아무 데도 안 나간다** — 알려 준다.
       this.log.warn(`[${label}] MQTT가 꺼져 있어 중계하지 않습니다 `
@@ -732,7 +738,7 @@ class SmartThingsKM81Platform {
       for (let attempt = 0; attempt < PURIFIER_PROBE_MAX; attempt += 1) {
         if (this._stopped) return;
         try {
-          const found = await this.localClient.probeIdentity(host, configDevice.local.port);
+          const found = await this.localClient.probeIdentity(host, configDevice.local.port, configDevice.local.localPort);
           deviceId = found.deviceId;
           name = found.name || null;
           if (attempt > 0) this.log.info(`[${label}] ${attempt + 1}회째 시도에 연결됐습니다.`);
@@ -760,6 +766,7 @@ class SmartThingsKM81Platform {
     this.localClient.registerDevice(deviceId, {
       host,
       port: configDevice.local.port ? Number(configDevice.local.port) : undefined,
+      localPort: configDevice.local.localPort ? Number(configDevice.local.localPort) : undefined,
       label,
       kind: 'waterPurifier',
       fallbackToCloud: false,   // 정수기는 클라우드 경로를 아예 두지 않는다

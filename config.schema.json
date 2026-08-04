@@ -813,13 +813,13 @@
         {
           "key": "devices[].deviceLabel",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
           "key": "devices[].deviceId",
           "condition": {
-            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer'].includes(model.devices[arrayIndices[0]].deviceType);"
+            "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
         {
@@ -880,7 +880,7 @@
         {
           "key": "devices[].local.host",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType) && d.transport === 'local';"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(d.deviceType) && (d.deviceType === 'waterPurifier' || d.transport === 'local');"
           }
         },
         {
@@ -1171,19 +1171,19 @@
         {
           "key": "devices[].sensorPollInterval",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['washer','dryer'].includes(d.deviceType);"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['washer','dryer','waterPurifier'].includes(d.deviceType);"
           }
         },
         {
           "key": "devices[].mqttSlug",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType);"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(d.deviceType);"
           }
         },
         {
           "key": "devices[].mqttExpose",
           "condition": {
-            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer'].includes(d.deviceType);"
+            "functionBody": "const d = model.devices[arrayIndices[0]]; return !!d && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(d.deviceType);"
           }
         },
         {

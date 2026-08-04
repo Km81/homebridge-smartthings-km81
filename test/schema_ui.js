@@ -299,18 +299,85 @@ check(HINT.test(hostTitle), `'local.host' 제목에 필수 여부 안내가 있�
 {
   const fs2 = require('fs');
   const path2 = require('path');
-  const idx = fs2.readFileSync(path2.join(__dirname, '..', 'index.js'), 'utf8');
   const props = SCHEMA.properties.devices.items.properties;
 
-  // `configDevice.<키>` 로 읽는 것을 소스에서 추출한다(손으로 옮겨 적지 않는다).
-  const used = new Set();
-  for (const m of idx.matchAll(/\bconfigDevice\.([a-zA-Z][a-zA-Z0-9]*)/g)) used.add(m[1]);
+  // ⚠️★`index.js` 만 보면 커버리지가 40% 밖에 안 된다(적대 리뷰 M-1). 설정 키의 절반 이상은
+  //   `lib/` 하위(액세서리·MQTT)에서 읽는다. 소스 범위를 넓힌다.
+  const roots = [path2.join(__dirname, '..', 'index.js')];
+  const walk = (dir) => {
+    for (const e of fs2.readdirSync(dir, { withFileTypes: true })) {
+      const full = path2.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.js')) roots.push(full);
+    }
+  };
+  walk(path2.join(__dirname, '..', 'lib'));
+  const src = roots.map((f) => fs2.readFileSync(f, 'utf8')).join('\n');
 
-  // 설정 키가 아닌 것(런타임 표식·내부 필드)은 제외한다.
-  const NOT_CONFIG = new Set(['transport', 'local', 'deviceType', 'deviceId']);
-  const missing = [...used].filter((k) => !NOT_CONFIG.has(k) && !k.startsWith('__km81') && !props[k]);
+  // ⚠️옵셔널 체이닝(`configDevice?.key`)도 잡는다 — 예전 정규식은 `?.` 를 못 봐서
+  //   `configDevice?.newKey` 한 줄이면 계측기 몰래 통과했다.
+  const used = new Set();
+  for (const m of src.matchAll(/\bconfigDevice\??\.([a-zA-Z][a-zA-Z0-9]*)/g)) used.add(m[1]);
+
+  // ⚠️★예전 `NOT_CONFIG` 4종(transport·local·deviceType·deviceId)은 **전부 진짜 스키마 키**였다.
+  //   "설정 키가 아니다"라고 적어 두고 가장 아픈 키들을 계약 밖에 두고 있었다 —
+  //   `transport` 가 UI 저장에서 소거되면 전 기기가 클라우드로 조용히 회귀한다(8/2 부류).
+  //   지금은 넷 다 스키마에 있으므로 **빼도 통과한다.** 뺀다.
+  // ⚠️**의도적으로 스키마에 두지 않는 키** — 옛 이름(별칭)이다. 스키마에 넣으면 UI 에
+  //   옛 이름이 노출돼 새 사용자가 그걸 쓰게 된다. 코드는 읽되 경고로 이전을 유도한다.
+  //   ⚠️단 대가가 있다: 스키마에 없으므로 **UI 저장 시 소거된다** → 옛 이름을 쓰던 사용자가
+  //     설정 화면을 한 번 열어 저장하면 그 값이 사라진다(냉방 모드가 기본으로 복귀).
+  //     그래서 **경고를 반드시 유지**해야 한다 — 소거되기 전에 사용자가 봐야 한다.
+  const DEPRECATED_ALIASES = new Set(['coolCommand']);
+  const missing = [...used].filter((k) => !k.startsWith('__km81') && !DEPRECATED_ALIASES.has(k) && !props[k]);
   check(missing.length === 0,
     `★코드가 읽는 설정 키가 전부 스키마에 있다 (없으면 UI 저장 시 소거된다) — 누락: ${missing.join(', ') || '없음'}`);
+
+  // 옛 별칭은 **스키마에 없어야** 정상이다(있으면 UI 에 노출된다). 뒤집어 검사한다.
+  const leaked = [...DEPRECATED_ALIASES].filter((k) => props[k]);
+  check(leaked.length === 0, `옛 별칭이 스키마에 노출되지 않는다 — 노출: ${leaked.join(', ') || '없음'}`);
+
+  // ★그리고 옛 별칭에는 **반드시 이전 안내 경고가 있어야 한다** — 소거되기 전에 보여야 한다.
+  for (const alias of DEPRECATED_ALIASES) {
+    const warned = new RegExp(`'${alias}'[^
+]*옛 이름`).test(src)
+      || new RegExp(`${alias}[\s\S]{0,300}log\.warn`).test(src);
+    check(warned, `★옛 별칭 '${alias}' 를 쓰면 이전하라고 경고한다 (UI 저장 시 소거되므로)`);
+  }
+
+  // ★기기 종류마다 **최소한 이 필드는 화면에 떠야 한다**. 안 뜨면 UI 로 등록 자체가 불가능하다.
+  //   실사고: `waterPurifier` 를 oneOf 에만 넣고 layout 조건식에 안 넣어, 정수기를 고르면
+  //   기기 IP 칸이 안 떴다(표시 필드 0개). 그런데 기존 계약은 전부 초록이었다.
+  const REQUIRED_FIELDS = {
+    smartAc: ['deviceLabel', 'local.host'],
+    systemAc: ['deviceLabel', 'local.host'],
+    washer: ['deviceLabel'],
+    dryer: ['deviceLabel', 'local.host'],
+    legacyAc: ['name'],
+    waterPurifier: ['deviceLabel', 'local.host'],
+  };
+  const visibleFor = (deviceType) => {
+    const model = { devices: [{ deviceType, transport: 'local' }] };
+    const out = [];
+    (function walkLayout(n) {
+      if (Array.isArray(n)) return n.forEach(walkLayout);
+      if (!n || typeof n !== 'object') return;
+      if (n.key && String(n.key).startsWith('devices[].')) {
+        const body = n.condition && n.condition.functionBody;
+        let ok = true;
+        if (body) { try { ok = new Function('model', 'arrayIndices', body)(model, [0]); } catch (e) { ok = false; } }
+        if (ok) out.push(String(n.key).replace('devices[].', ''));
+      }
+      Object.values(n).forEach(walkLayout);
+    })(schemaFile.layout || []);
+    return out;
+  };
+  for (const [type, need] of Object.entries(REQUIRED_FIELDS)) {
+    const vis = visibleFor(type);
+    const lack = need.filter((f) => !vis.includes(f));
+    check(lack.length === 0,
+      `★'${type}' 를 고르면 필수 필드가 화면에 뜬다 (안 뜨면 UI 로 등록 불가) — 없는 것: ${lack.join(', ') || '없음'}`);
+  }
 
   // mqttSlug 는 그 사고의 당사자라 이름을 박아 둔다.
   check(!!props.mqttSlug, '★★mqttSlug 가 스키마에 있다 (8/2 유령 엔티티 사고의 근본 원인)');
