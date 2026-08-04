@@ -22,6 +22,9 @@ const PACKAGE_ROOT = __dirname;
 const LOCAL_ID_BUDGET_MS = 15000;   // 전체 조회 상한 (기기별이 아니라 합계)
 const LOCAL_ID_RETRY_MS = 30000;    // 재시도 간격
 const LOCAL_ID_RETRY_MAX = 12;      // 최대 6분 — pip 180초 + 인증서 발급을 넉넉히 덮는다
+// 정수기 신원 조회 재시도 — 홈킷 기기의 LOCAL_ID_RETRY_MAX 와 같은 값.
+// ⚠️정수기는 홈킷 액세서리가 없어 **빠져도 사용자가 못 알아챈다** — 재시도가 더 중요하다.
+const PURIFIER_PROBE_MAX = 12;
 
 // 로그에 쓸 기기 이름. deviceLabel이 비어 있어도(deviceId만 적은 구성은 정상 지원된다)
 // `[undefined]`가 찍히지 않도록 폴백을 둔다 — 오늘 `undefined GET 오류`와 같은 부류.
@@ -720,14 +723,38 @@ class SmartThingsKM81Platform {
     let deviceId = configDevice.deviceId;
     let name = null;
     if (!deviceId) {
-      try {
-        const found = await this.localClient.probeIdentity(host, configDevice.local.port);
-        deviceId = found.deviceId;
-        name = found.name || null;
-      } catch (e) {
-        this.log.warn(`[${label}] ${host}의 deviceId를 확인하지 못했습니다 — 기기 전원과 IP를 확인하세요: ${e.message}`);
-        return;
+      // ★★신원 조회는 **재시도해야 한다**(2026-08-04 실사고). 첫 시도에서 기기가 응답하지
+      //   않으면(절전·전원 꺼짐·부팅 중 mDNS 미준비) 그대로 포기해 **재시작 전까지 영영**
+      //   안 붙었다. 홈킷 기기 쪽에는 `_scheduleLocalIdRetry`(12회)가 있는데 여기만 없었다.
+      //   ⚠️정수기는 홈킷 액세서리가 없어 **사용자가 빠진 걸 알아챌 방법도 없다** — 더 나쁘다.
+      //   30초 → 2분 → 10분으로 늘려 가며 최대 12회(약 1.5시간) 시도한다.
+      const DELAYS = [30, 120, 600];
+      for (let attempt = 0; attempt < PURIFIER_PROBE_MAX; attempt += 1) {
+        if (this._stopped) return;
+        try {
+          const found = await this.localClient.probeIdentity(host, configDevice.local.port);
+          deviceId = found.deviceId;
+          name = found.name || null;
+          if (attempt > 0) this.log.info(`[${label}] ${attempt + 1}회째 시도에 연결됐습니다.`);
+          break;
+        } catch (e) {
+          const last = attempt === PURIFIER_PROBE_MAX - 1;
+          const waitSec = DELAYS[Math.min(attempt, DELAYS.length - 1)];
+          // 첫 회만 사용자에게 알린다 — 12줄이 쌓이면 로그만 지저분해진다.
+          if (attempt === 0) {
+            this.log.warn(`[${label}] ${host}가 응답하지 않습니다 — 기기 전원과 IP를 확인하세요. `
+              + `${waitSec}초 뒤 다시 시도합니다(최대 ${PURIFIER_PROBE_MAX}회): ${e.message}`);
+          } else if (last) {
+            this.log.error(`[${label}] ${PURIFIER_PROBE_MAX}회 시도했지만 ${host}에 연결하지 못했습니다 — `
+              + '기기 전원·IP를 확인한 뒤 홈브릿지를 재시작하세요.');
+          } else {
+            this.log.debug?.(`[${label}] 신원 조회 ${attempt + 1}회째 실패 — ${waitSec}초 뒤 재시도: ${e.message}`);
+          }
+          if (last) return;
+          await new Promise((r) => { const t = setTimeout(r, waitSec * 1000); t.unref?.(); });
+        }
       }
+      if (!deviceId) return;
     }
 
     this.localClient.registerDevice(deviceId, {
