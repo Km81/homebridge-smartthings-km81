@@ -539,6 +539,63 @@ setTimeout(() => {
   }
 }, 50);
 
+// ── 2026-08-05: last_seen(마지막 수신) 계약 ──────────────────────────────────
+//
+// 왜: 브리지 availability 는 브리지 생사만 알려 줘서 HA 가 "값이 안 바뀐 것"과 "기기가 죽은
+// 것"을 구분 못 한다(실제로 11.6시간 같은 값이 있었다). 기기별 availability 로 풀면
+// **"전원을 끈 것"과 "죽은 것"이 섞이므로**(요청서 §4-2) 사실만 내보내고 임계는 HA 가 정한다.
+{
+  console.log('\n[last_seen 계약]');
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.14.5');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+    const cfgOf = (uid) => c.published.filter(p => /\/config$/.test(p.topic) && p.payload !== '')
+      .map(p => JSON.parse(p.payload)).find(x => x.unique_id === uid);
+
+    b.registerSmartAc({ slug: 'ac1', label: '에어컨', setChar: async () => {},
+      hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true, hasMonitor: true });
+    b.registerLaundry({ slug: 'w1', label: '세탁기', kind: 'washer', hasDetail: false });
+    b.registerWaterPurifier({ slug: 'wp1', label: '정수기' });
+
+    for (const [slug, who] of [['ac1', '에어컨'], ['w1', '세탁기'], ['wp1', '정수기']]) {
+      const d = cfgOf(`km81_${slug}_last_seen`);
+      ok(d && d.device_class === 'timestamp' && d.entity_category === 'diagnostic',
+        `${who} last_seen 이 timestamp·진단 항목으로 등록된다`, d ? d.device_class : '없음');
+    }
+
+    // ★기기별 availability 를 만들지 않았는지 — 이게 이 설계의 핵심 계약이다.
+    const perDev = c.published.filter(p => /\/availability$/.test(p.topic)
+      && p.topic !== 'km81/appliance/bridge/availability');
+    ok(perDev.length === 0, '★기기별 availability 를 만들지 않는다(꺼짐과 사망이 섞인다)',
+      `${perDev.length}건`);
+
+    // 값 전달: ISO 8601 + Z (HA timestamp 는 오프셋을 요구한다)
+    const iso = '2026-08-05T06:30:00.000Z';
+    b.publishSmartAcSensors('ac1', { last_seen: iso });
+    b.publishLaundryState('w1', { last_seen: iso });
+    b.publishWaterPurifierState('wp1', { last_seen: iso });
+    const stOf = (slug) => JSON.parse(c.published.filter(p => p.topic === `km81/appliance/${slug}/state`).pop().payload);
+    ok(['ac1', 'w1', 'wp1'].every(x => stOf(x).last_seen === iso),
+      'last_seen 이 세 기기 상태에 그대로 실린다(오프셋 보존)');
+
+    // ★실패 회차(undefined)는 **덮지 않는다** — 마지막 성공 시각이 남아야 경과가 커진다.
+    b.publishSmartAcSensors('ac1', { power_w: 100 });
+    ok(stOf('ac1').last_seen === iso,
+      '★조회 실패 회차가 last_seen 을 지우지 않는다(경과가 커져야 HA 가 사망을 안다)',
+      stOf('ac1').last_seen);
+
+    // 폴러가 없는 에어컨은 last_seen 도 유령이다 → 등록하지 않고 회수한다.
+    const n0 = c.published.length;
+    b.registerSmartAc({ slug: 'ac2', label: '클라우드 에어컨', setChar: async () => {},
+      hasWindFree: false, hasAutoClean: false, hasLight: false, hasSound: false, hasMonitor: false });
+    const ls = c.published.slice(n0).find(p => p.topic.endsWith('/km81_ac2/last_seen/config'));
+    ok(ls && ls.payload === '', '★폴러 없으면 last_seen 도 회수된다(채워질 수 없는 값)');
+  });
+}
+
 // ── 2026-08-05: 중계를 끈 기기 회수 · 세탁기 상세값 게이트 ────────────────────
 //
 // 왜 이 계약이 필요한가:
