@@ -185,11 +185,13 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     ok(c.opts.will.payload === 'offline' && c.opts.will.retain === true, 'LWT는 offline·retain');
     c.emit('connect');
     b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });            // 8888: progress/energy 없음
-    b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer', hasProgress: true, hasEnergy: true });
+    b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer', hasProgress: true, hasEnergy: true, hasDetail: true });
     b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true });
 
     // 모든 검색 payload가 같은 availability_topic 하나만 참조해야 한다.
-    const cfgs = c.published.filter(p => /\/config$/.test(p.topic)).map(p => JSON.parse(p.payload));
+    // 빈 페이로드는 **회수**(엔티티 내리기)이지 검색 정의가 아니다 — 내용 검사 대상에서 뺀다.
+    const cfgs = c.published.filter(p => /\/config$/.test(p.topic) && p.payload !== '')
+      .map(p => JSON.parse(p.payload));
     ok(cfgs.length >= 6, `검색 엔티티 ${cfgs.length}개 발행`);
     const avails = new Set(cfgs.map(x => x.availability_topic));
     ok(avails.size === 1 && avails.has('km81/appliance/bridge/availability'),
@@ -513,3 +515,82 @@ setTimeout(() => {
     });
   }
 }, 50);
+
+// ── 2026-08-05: 중계를 끈 기기 회수 · 세탁기 상세값 게이트 ────────────────────
+//
+// 왜 이 계약이 필요한가:
+//  · 8888 세탁기는 원격제어·건조강도 같은 값을 **읽을 경로가 없다**. discovery 만 나가면
+//    HA 에 영영 값이 안 채워지는 유령 엔티티가 남는다(HA 방 실측 5개).
+//  · 설정에서 중계를 끄면, 껐다는 사실이 HA 에 전달되지 않아 엔티티가 **마지막 값에
+//    얼어붙는다**. 관찰 기간 내내 죽은 기기의 옛 값을 살아 있는 값으로 보게 된다.
+{
+  console.log('\n[회수·상세값 게이트]');
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.14.3');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+    const cfgs = (from) => c.published.slice(from).filter(p => /\/config$/.test(p.topic));
+    const KEYS = ['remote_control', 'kids_lock', 'dry_level', 'alarm_code', 'course', 'wrinkle_prevent'];
+
+    // (1) 8888 세탁기 — 상세 discovery 는 빈 페이로드(회수)로만 나간다.
+    let n = c.published.length;
+    b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer',
+      hasEnergy: false, hasProgress: false, hasDetail: false });
+    const w = cfgs(n);
+    const wBad = KEYS.filter(k => {
+      const m = w.find(x => x.topic.endsWith(`/${k}/config`));
+      return !m || m.payload !== '' || m.opts.retain !== true;
+    });
+    ok(wBad.length === 0, '세탁기 상세값 6종은 빈 페이로드 retain 으로 회수', wBad.join(',') || '전부 회수');
+
+    // (2) 건조기 — 상세값이 전부 나가고 구김방지도 포함된다(발행만 하고 discovery 가 없던 값).
+    n = c.published.length;
+    b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer',
+      hasEnergy: true, hasProgress: true, hasDetail: true });
+    const dKeys = cfgs(n).filter(p => p.payload !== '').map(p => p.topic.split('/').slice(-2)[0]);
+    const dMiss = KEYS.filter(k => !dKeys.includes(k));
+    ok(dMiss.length === 0, '건조기는 상세값 6종 전부 발행(구김방지 포함)', dMiss.join(',') || `${dKeys.length}종`);
+
+    // (3) retractDevice — 정수기 16종 + state 가 전부 빈 페이로드 retain.
+    n = c.published.length;
+    const done = b.retractDevice({ slug: 'water_purifier', kind: 'waterPurifier', label: '정수기' });
+    const rc = cfgs(n);
+    ok(done === true && rc.length >= 16 && rc.every(p => p.payload === '' && p.opts.retain === true),
+      '정수기 회수 — discovery 16종이 빈 페이로드 retain', `${rc.length}종`);
+    const st = c.published.slice(n).find(p => p.topic === 'km81/appliance/water_purifier/state');
+    ok(!!st && st.payload === '' && st.opts.retain === true, '정수기 state 토픽도 회수');
+
+    // (4-a) ★연결 **전**에 들어온 회수는 사라지지 않고, 연결 시 재발행보다 먼저 실행된다.
+    //   순서가 반대면 방금 지운 엔티티가 그 자리에서 되살아난다.
+    {
+      const log2 = mkLog();
+      const b2 = new MqttBridge(log2, CFG, '2.14.3');
+      withFakeMqtt(cr2 => {
+        b2.start();
+        const c2 = cr2[0];
+        b2.registerLaundry({ slug: 'dryer', label: '건조기', kind: 'dryer', hasDetail: true });
+        const queued = b2.retractDevice({ slug: 'water_purifier', kind: 'waterPurifier', label: '정수기' });
+        ok(queued === true && c2.published.length === 0,
+          '연결 전 회수는 대기열로 들어간다(발행 0건)', `발행 ${c2.published.length}건`);
+        c2.emit('connect');
+        const cfgTopics = c2.published.filter(p => /\/config$/.test(p.topic));
+        const wp = cfgTopics.filter(p => p.topic.includes('km81_water_purifier'));
+        ok(wp.length >= 16 && wp.every(p => p.payload === ''),
+          '연결 시 대기 회수가 실행된다', `${wp.length}종`);
+        const firstWp = c2.published.findIndex(p => p.topic.includes('km81_water_purifier'));
+        const firstDryer = c2.published.findIndex(p => p.topic.includes('km81_dryer/'));
+        ok(firstWp >= 0 && firstDryer >= 0 && firstWp < firstDryer,
+          '★회수가 검색 재발행보다 먼저다(반대면 지운 것이 되살아난다)', `회수 ${firstWp} < 재발행 ${firstDryer}`);
+      });
+    }
+
+    // (4) 회수 플래그가 새지 않는다 — 다음 등록은 정상 페이로드여야 한다.
+    n = c.published.length;
+    b.registerWaterPurifier({ slug: 'water_purifier', label: '정수기' });
+    const re = cfgs(n);
+    ok(re.length >= 16 && re.every(p => p.payload !== ''),
+      '회수 뒤 재등록은 정상 페이로드(_retractMode 누수 없음)', `${re.length}종`);
+  });
+}

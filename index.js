@@ -720,6 +720,7 @@ class SmartThingsKM81Platform {
     //   (적대 리뷰 M-3: 이 검사가 `_attachMqtt` 에만 있어 정수기는 무시하고 있었다).
     if (configDevice.mqttExpose === false) {
       this.log.info(`[${label}] MQTT 중계를 끔(설정) — 이 기기는 어디에도 노출되지 않습니다.`);
+      this._retractMqtt(configDevice, 'waterPurifier', label);
       return;
     }
     if (!this.mqtt || !this.mqtt.enabled) {
@@ -928,11 +929,31 @@ class SmartThingsKM81Platform {
     return slug;
   }
 
+  // 중계를 끈 기기의 retained discovery·state 를 회수한다(HA 엔티티를 내린다).
+  // ⚠️이게 없으면 껐다는 사실이 HA 에 전달되지 않아, 엔티티가 **마지막 값에 얼어붙은 채**
+  //   남는다 — 관찰 기간 내내 죽은 기기의 옛 값을 살아 있는 값으로 보게 된다.
+  //   한 번 회수되면 브로커에 retained 가 없으므로 재부팅해도 되살아나지 않고,
+  //   설정을 다시 켜면 register 가 그대로 재생성한다.
+  _retractMqtt(configDevice, kind, label, deviceId) {
+    if (!this.mqtt || !this.mqtt.enabled) return;
+    try {
+      const slug = this._mqttSlug(configDevice, deviceId || configDevice.deviceId);
+      if (!slug) return;
+      if (this.mqtt.retractDevice({ slug, kind, label, model: configDevice.model })) {
+        this.log.debug?.(`[MQTT] '${label}' 의 남은 HA 엔티티를 회수했습니다(slug=${slug}).`);
+      }
+    } catch (e) {
+      this.log.debug?.(`[MQTT] 회수 시도 실패(${label}): ${e && e.message}`);
+    }
+  }
+
   // ★어떤 실패도 홈킷을 막지 않는다 — 중계는 부가 기능이다.
   _attachMqtt(accessory, configDevice, logic) {
     if (!this.mqtt || !this.mqtt.enabled) return;
     if (configDevice.mqttExpose === false) {
       this.log.debug?.(`[MQTT] '${accessory.displayName}' 은 설정에서 중계 제외됨`);
+      this._retractMqtt(configDevice, configDevice.deviceType, accessory.displayName,
+        accessory.context?.device?.deviceId);
       return;
     }
     // ★세탁조 분리(splitCompartments) + MQTT 조합은 아직 메인 구획만 반영된다(보조는 별
