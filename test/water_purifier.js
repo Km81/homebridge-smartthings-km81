@@ -222,10 +222,13 @@ function makeBridge(log) {
     check(fav !== null && fav.enabled === null,
       `★성공·빈 값이면 객체를 돌려준다(필드만 null) — 실측 ${JSON.stringify(fav)}`);
 
-    // (b) 조회 자체가 실패 → **null**
+    // (b) 조회 자체가 실패 → **undefined**
+    // ⚠️2026-08-05 계약 통일: 예전엔 "실패=null" 이었는데, null 은 `_mergeAndPublish` 에서
+    //   **키 삭제**를 뜻하므로 실패에 쓰면 못 읽은 값을 지우게 된다. 실패는 undefined 다.
+    //   전 getter 계약은 `test/getter_contract.js` 가 소스에서 전수 추출해 강제한다.
     const dead = makeClient({ dead: true });
     const favDead = await dead.c.getFavoriteCapacity('WP');
-    check(favDead === null, '★조회 실패면 null — 둘이 구분된다');
+    check(favDead === undefined, '★조회 실패면 undefined — 빈 값(null)과 구분된다');
 
     // (c) 그래서 HA 에서 값이 **지워진다**(고착되지 않는다)
     const { log } = makeClient();

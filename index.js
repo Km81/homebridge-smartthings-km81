@@ -720,7 +720,14 @@ class SmartThingsKM81Platform {
     //   (적대 리뷰 M-3: 이 검사가 `_attachMqtt` 에만 있어 정수기는 무시하고 있었다).
     if (configDevice.mqttExpose === false) {
       this.log.info(`[${label}] MQTT 중계를 끔(설정) — 이 기기는 어디에도 노출되지 않습니다.`);
-      this._retractMqtt(configDevice, 'waterPurifier', label);
+      // ⚠️회수 slug 는 **등록 때 쓴 것과 같아야** 한다. 같은 종류가 여럿이면 slug 에 deviceId
+      //   접미사가 붙는데, 여기선 아직 신원 조회를 안 해 config 의 deviceId(대개 없음)만 있다
+      //   → 엉뚱한 토픽을 지우고 진짜 유령은 남는다(적대 리뷰). 캐시에서 읽어 맞춘다(조회 0회).
+      let retractId = configDevice.deviceId;
+      if (!retractId && host && this.localClient) {
+        try { retractId = this.localClient.readDiscovered(host)?.deviceId || null; } catch (e) { retractId = null; }
+      }
+      this._retractMqtt(configDevice, 'waterPurifier', label, retractId);
       return;
     }
     if (!this.mqtt || !this.mqtt.enabled) {

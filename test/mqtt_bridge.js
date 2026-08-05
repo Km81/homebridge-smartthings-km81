@@ -186,7 +186,7 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
     c.emit('connect');
     b.registerLaundry({ slug: 'washer', label: '세탁기', kind: 'washer' });            // 8888: progress/energy 없음
     b.registerLaundry({ slug: 'dryer2', label: '건조기', kind: 'dryer', hasProgress: true, hasEnergy: true, hasDetail: true });
-    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true });
+    b.registerSmartAc({ slug: 'seungjun_ac', label: '승준 에어컨', setChar: async () => {}, hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true, hasMonitor: true });
 
     // 모든 검색 payload가 같은 availability_topic 하나만 참조해야 한다.
     // 빈 페이로드는 **회수**(엔티티 내리기)이지 검색 정의가 아니다 — 내용 검사 대상에서 뺀다.
@@ -228,6 +228,22 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
       '건조기 순시 전력 센서 발행(로컬 getEnergy가 이미 읽던 값)');
     ok(!uids.includes('km81_washer_power_w'),
       '8888 세탁기는 순시 전력 미발행(getEnergy 자체가 없음)');
+
+    // ★★hasMonitor=false(로컬 폴 경로 없음) — 모니터링 센서를 만들지 않고, 있던 것은 회수한다.
+    //   이걸 안 재던 동안 기존 테스트가 **유령 엔티티가 생기는 상태를 '정상'으로 잠그고** 있었다.
+    {
+      const n0 = c.published.length;
+      b.registerSmartAc({ slug: 'cloudac', label: '클라우드 에어컨', setChar: async () => {},
+        hasWindFree: false, hasAutoClean: false, hasLight: false, hasSound: false, hasMonitor: false });
+      const made = c.published.slice(n0).filter(p => /\/config$/.test(p.topic));
+      const alive = made.filter(p => p.payload !== '').map(p => p.topic.split('/').slice(-2)[0]);
+      const retracted = made.filter(p => p.payload === '').map(p => p.topic.split('/').slice(-2)[0]);
+      ok(alive.length === 1 && alive[0] === 'climate',
+        '★폴러 없는 에어컨은 climate 하나만 — 모니터링 센서 유령 없음', alive.join(','));
+      ok(['power_w', 'mode_actual', 'alarm_ok', 'night_mode', 'windfree', 'light']
+        .every(k => retracted.includes(k)),
+        '★없는 센서·스위치는 빈 페이로드로 회수된다', `${retracted.length}종`);
+    }
     ok(uids.includes('km81_dryer2_progress') && uids.includes('km81_dryer2_energy_kwh'),
       '건조기 진행률·에너지 센서 발행');
     ok(!uids.includes('km81_washer_progress') && !uids.includes('km81_washer_energy_kwh'),
@@ -280,9 +296,16 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
         `★★모든 단순 value_template 에 기본값이 붙는다 (없으면 키 부재 시 HA 템플릿 경고)`,
         noDefault.map((c) => c.unique_id).join(', '));
       const sample = cfgs.find((c) => c.unique_id === 'km81_dryer2_alarm_code');
-      ok(sample && /\|\s*default\('unknown'\)/.test(sample.value_template || ''),
-        '★기본값이 `unknown` 이다 (HA 가 STATE_UNKNOWN 으로 인식 — 빈 문자열이면 옛 값이 남는다)',
+      ok(sample && /\|\s*default\('None'\)/.test(sample.value_template || ''),
+        "★기본값은 `'None'` 이다 — HA 의 PAYLOAD_NONE 이라 sensor·binary_sensor·climate 가 "
+        + "전부 unknown 으로 읽는다('unknown' 은 숫자 센서에서 ERROR 로 승격된다)",
         sample && sample.value_template);
+      // ★climate 전용 템플릿 3종도 반드시 포함되어야 한다(`value_template` 만 감싸면 빠진다).
+      const clim = cfgs.find((c) => c.unique_id === 'km81_seungjun_ac_climate');
+      const climKeys = clim ? Object.keys(clim).filter((k) => /_template$/.test(k)) : [];
+      const climBad = climKeys.filter((k) => !/\|\s*default\(/.test(clim[k]));
+      ok(clim && climKeys.length >= 3 && climBad.length === 0,
+        '★climate 상태 템플릿에도 기본값이 붙는다', `${climKeys.length}종 중 누락 ${climBad.length}`);
     }
 
     const rc = cfgs.find(x => x.unique_id === 'km81_dryer2_remote_control');
@@ -579,10 +602,13 @@ setTimeout(() => {
         const wp = cfgTopics.filter(p => p.topic.includes('km81_water_purifier'));
         ok(wp.length >= 16 && wp.every(p => p.payload === ''),
           '연결 시 대기 회수가 실행된다', `${wp.length}종`);
-        const firstWp = c2.published.findIndex(p => p.topic.includes('km81_water_purifier'));
-        const firstDryer = c2.published.findIndex(p => p.topic.includes('km81_dryer/'));
-        ok(firstWp >= 0 && firstDryer >= 0 && firstWp < firstDryer,
-          '★회수가 검색 재발행보다 먼저다(반대면 지운 것이 되살아난다)', `회수 ${firstWp} < 재발행 ${firstDryer}`);
+        // ⚠️회수 토픽도 `km81_dryer/` 에 매치되므로 **페이로드가 있는 것(=재발행)** 만 센다.
+        const lastRetract = c2.published.reduce((acc, p, i) =>
+          (/\/config$/.test(p.topic) && p.payload === '' ? i : acc), -1);
+        const firstRepub = c2.published.findIndex(p => /\/config$/.test(p.topic) && p.payload !== '');
+        ok(lastRetract >= 0 && firstRepub >= 0 && lastRetract < firstRepub,
+          '★모든 회수가 검색 재발행보다 먼저다(반대면 지운 것이 되살아난다)',
+          `마지막 회수 ${lastRetract} < 첫 재발행 ${firstRepub}`);
       });
     }
 

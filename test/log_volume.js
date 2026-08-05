@@ -262,7 +262,12 @@ fullScenario('★전계층 — 세탁조 분리 + 꺼짐 (보조 구획 warn 폭
   const alarmsIn = (r) => [...r.uniq.entries()].filter(([m]) => ALARM.test(m));
 
   const fOff = rows[5];
-  check(fOff.visible <= 3, `[전계층] 꺼진 세탁기 하루 사용자 로그 ≤3줄 (실측 ${fOff.visible}줄)`);
+  // ★임계 3→4 (2026-08-05): 부팅 첫 폴 성공에 `기기 접속됨` 접촉선 **1줄**을 추가했다.
+  //   왜 늘렸나 — 실패 스트릭은 메모리에만 있어서, 🔴가 걸린 뒤 홈브릿지가 재시작되면
+  //   복구 문구가 영영 안 나오고 감시기 경보가 6시간마다 계속 울린다(재시작 구멍).
+  //   DTLS 경로에서 이미 같은 결정을 했고(`로컬 기기 접속됨`), 그 미전파를 메운 것이다.
+  //   ⚠️임계를 올릴 땐 반드시 이유를 남긴다 — 근거 없이 올리면 다음번 진짜 폭주를 놓친다.
+  check(fOff.visible <= 4, `[전계층] 꺼진 세탁기 하루 사용자 로그 ≤4줄 (실측 ${fOff.visible}줄)`);
   // ★2026-07-30 실측에서 배운 것: "하루 1줄"은 **재시작이 없을 때**의 값이다.
   //   재시작하면 꺼짐 래치(`_offlineNotified`)가 초기화되므로 새 프로세스가 1줄을 다시 낸다.
   //   그날 배포로 4번 재시작했더니 총 5줄(사이클 종료 1 + 재시작 4)이 나왔고, 순간
@@ -288,7 +293,7 @@ fullScenario('★전계층 — 세탁조 분리 + 꺼짐 (보조 구획 warn 폭
     + (alarmsIn(fBrief).length ? `: ${alarmsIn(fBrief)[0][0].slice(0, 60)}` : '') + ')');
 
   const fSplit = rows[7];
-  check(fSplit.visible <= 5, `[전계층] 세탁조 분리 + 꺼짐 하루 사용자 로그 ≤5줄 (실측 ${fSplit.visible}줄)`);
+  check(fSplit.visible <= 6, `[전계층] 세탁조 분리 + 꺼짐 하루 사용자 로그 ≤6줄 (실측 ${fSplit.visible}줄)`);   // 위와 같은 이유(+1줄)
   check(alarmsIn(fSplit).length === 0, `[전계층] 분리 모드 꺼짐에서 경보 문구 0건 (실측 ${alarmsIn(fSplit).length}건)`);
 
   console.log(fail.length ? `\n❌ ${fail.length}건 실패` : '\n✅ 전부 통과');

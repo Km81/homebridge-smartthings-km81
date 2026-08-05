@@ -24,6 +24,10 @@ const SUITES = [
   { file: 'log_volume.js' },
   { file: 'schema_ui.js' },
   { file: 'readme_check.js' },
+  // v2.14.4 — getter 반환 계약("실패=undefined / 빈 값=null")을 소스에서 전수 추출해 강제한다.
+  //           이 규칙을 주석으로 세 번 적었고 세 번 다 다음 날 어겼다. 21종 중 15종이 위반
+  //           상태였고 증상은 매번 같았다 — 값이 사라져도 HA 센서가 옛 값에 영구 고착.
+  { file: 'getter_contract.js' },
   // v2.6.7 — 인증서 발급은 **첫 설치에서만** 지나가는 경로라 우리 기기로는 절대 안 깨진다.
   //          최신 배포판에서 발급이 통째로 실패하던 결함이 사용자 로그로만 드러났다.
   { file: 'bridge_cert.js' },
