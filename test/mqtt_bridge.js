@@ -539,6 +539,62 @@ setTimeout(() => {
   }
 }, 50);
 
+// ── 2026-08-05: 로컬 구성에서 모니터링 폴러가 실제로 만들어지는가 ──────────────
+//
+// ⚠️실사고: 게이트를 리팩터하며 변수(`n`)를 지웠는데 아래에서 계속 참조해 **ReferenceError**
+//   가 났다. `node --check` 도 모듈 로드도 통과하고, 기존 테스트는 `logic: {}`(클라우드 취급)
+//   이라 이 블록을 **한 번도 타지 않았다**. 배포 후 브로커에서 에어컨 상태가 21키 → 5키로
+//   줄어든 것을 보고서야 알았다. 로컬 경로를 실제로 태우는 검사가 필요하다.
+{
+  console.log('\n[로컬 폴러 생성]');
+  const log = mkLog();
+  const api = mkApi();
+  const b = new MqttBridge(log, CFG, '2.14.7');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+
+    const acc = mkAccessory('승준 에어컨', [S.HeaterCooler]);
+    const main = acc.getService(S.HeaterCooler);
+    main.getCharacteristic(C.Active).updateValue(1);
+    main.getCharacteristic(C.CurrentTemperature).updateValue(26);
+    main.getCharacteristic(C.CoolingThresholdTemperature).setProps({ minValue: 18, maxValue: 30 });
+    main.getCharacteristic(C.CoolingThresholdTemperature).updateValue(24);
+    acc.context = { device: { deviceId: 'AC-LOCAL-1' } };
+
+    // 로컬 클라이언트로 인식되려면 `getEnergy` 가 있어야 한다(isLocalClient).
+    const calls = [];
+    const client = {
+      getEnergy: async () => { calls.push('energy'); return { power_w: 100, cumulative_kwh: 1 }; },
+      getHumidity: async () => 50,
+      getLight: async () => true,
+      getSoundEffect: async () => false,
+      _stat: () => ({ ok: 1, fail: 0, lastOk: Date.parse('2026-08-05T08:00:00.000Z') }),
+    };
+
+    let threw = null;
+    let res = null;
+    try {
+      res = attachSmartAc({
+        bridge: b, api, log, accessory: acc, logic: { smartthings: client },
+        configDevice: { pollingInterval: 10, local: { host: '1.2.3.4', fallbackToCloud: false } },
+        slug: 'localac',
+      });
+    } catch (e) { threw = e; }
+
+    ok(!threw, '★로컬 구성에서 attachSmartAc 이 예외 없이 끝난다',
+      threw ? `${threw.name}: ${threw.message}` : 'OK');
+    ok(res === true, '연결 성공을 반환한다');
+
+    // 폴러가 실제로 붙었는가 — 모니터링 discovery 와 last_seen 이 등록돼야 한다.
+    const uids = c.published.filter(p => /\/config$/.test(p.topic) && p.payload !== '')
+      .map(p => JSON.parse(p.payload).unique_id);
+    ok(uids.includes('km81_localac_power_w') && uids.includes('km81_localac_last_seen'),
+      '★로컬 구성이면 모니터링 센서와 last_seen 이 등록된다');
+  });
+}
+
 // ── 2026-08-05: 소비자 최종단의 null 의미론 (적대 리뷰 F1·F2) ────────────────
 //
 // 공급자(getter)에서 "실패=undefined / 빈 값=null" 을 통일했는데, **발행 함수가 null 을
