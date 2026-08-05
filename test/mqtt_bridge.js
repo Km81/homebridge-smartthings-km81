@@ -265,6 +265,24 @@ console.log('\n④ ★availability는 브리지 하나뿐 — 기기 꺼짐은 �
       '★느린 티어 값이 함께 실린다(원격제어·어린이잠금·건조강도)', JSON.stringify(after));
 
     // ⚠️원격제어 false 는 "HA 명령이 안 먹는다"는 뜻이라 진단 항목으로 노출한다.
+    // ★★2026-08-05 — 모든 value_template 에 기본값이 붙어야 한다 (HA 방 실측: 템플릿 경고 1,653건/일)
+    //
+    // `_mergeAndPublish` 는 값이 사라지면 **키를 지운다**(v2.13.x — 옛 값 고착 방지).
+    // 그런데 템플릿이 `{{ value_json.X }}` 면 키가 없을 때 Jinja 가 UndefinedError 를 낸다.
+    // ★설계가 틀린 게 아니라 **양쪽 계약을 안 맞춘 것**이다.
+    // ⚠️호출부가 13곳이라 하나만 빠져도 그 필드가 매일 경고를 낸다 — 전수로 잰다.
+    {
+      const noDefault = cfgs.filter((c) => typeof c.value_template === 'string'
+        && /^\{\{\s*value_json\.[A-Za-z0-9_]+\s*\}\}$/.test(c.value_template));
+      ok(noDefault.length === 0,
+        `★★모든 단순 value_template 에 기본값이 붙는다 (없으면 키 부재 시 HA 템플릿 경고)`,
+        noDefault.map((c) => c.unique_id).join(', '));
+      const sample = cfgs.find((c) => c.unique_id === 'km81_dryer2_alarm_code');
+      ok(sample && /\|\s*default\('unknown'\)/.test(sample.value_template || ''),
+        '★기본값이 `unknown` 이다 (HA 가 STATE_UNKNOWN 으로 인식 — 빈 문자열이면 옛 값이 남는다)',
+        sample && sample.value_template);
+    }
+
     const rc = cfgs.find(x => x.unique_id === 'km81_dryer2_remote_control');
     ok(rc && rc.entity_category === 'diagnostic' && rc.payload_on === 'ON',
       '원격제어 허용 센서가 진단 항목으로 등록된다');
