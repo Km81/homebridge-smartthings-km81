@@ -343,7 +343,7 @@ check(HINT.test(hostTitle), `'local.host' 제목에 필수 여부 안내가 있�
 ]*옛 이름`).test(src)
       // ⚠️템플릿 리터럴 안에서는 `\s\S` 가 JS 이스케이프로 먼저 먹혀 `[sS]` 로 죽는다
       //   — 정규식이 조용히 무력해진다(2026-08-05 적대 리뷰). 백슬래시를 살려 쓴다.
-      || new RegExp(`${alias}[\s\S]{0,300}log\.warn`).test(src);
+      || new RegExp(alias + '[\\s\\S]{0,300}log\\.warn').test(src);
     check(warned, `★옛 별칭 '${alias}' 를 쓰면 이전하라고 경고한다 (UI 저장 시 소거되므로)`);
   }
 

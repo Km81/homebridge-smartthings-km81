@@ -52,9 +52,11 @@ const USED = new Set();
 // 알린다(폴러의 catch 가 받아 연속 실패를 센다). 계약이 다르므로 같은 잣대로 재면 안 된다.
 const SCOPED = GETTERS.filter((g) => USED.has(g) && g !== 'getStatus');
 
-console.log(`\n[getter 반환 계약] 대상 ${GETTERS.length}종`);
-if (GETTERS.length < 15) {
-  console.log(`  ❌ 추출이 너무 적다(${GETTERS.length}) — 판정 무효`);
+console.log(`\n[getter 반환 계약] _get 사용 ${GETTERS.length}종 / MQTT 소비 ${SCOPED.length}종`);
+// ⚠️추출이 비면 "전부 통과"가 공허해진다 — **양쪽 집합 크기를 먼저** 확인하고 시작한다
+//   (이 저장소가 빈 집합을 성공으로 오판한 전례가 있다. 적대 리뷰 F8).
+if (GETTERS.length < 15 || SCOPED.length < 12) {
+  console.log(`  ❌ 추출이 너무 적다(${GETTERS.length}/${SCOPED.length}) — 판정 무효`);
   process.exit(1);
 }
 
@@ -93,17 +95,21 @@ function mkClient(getImpl) {
     '★조회 성공·빈 값은 undefined 가 아니다 (실패와 구분된다)',
     badEmpty.length ? badEmpty.join(' · ') : `${SCOPED.length}종`);
 
-  // ③ 두 경우가 실제로 구별 가능한가 — 계약의 핵심
+  // ③ 두 경우가 **서로 다른 값**인가 — ①②는 각각의 값만 보므로 이 비교가 따로 필요하다.
+  //   ⚠️예전엔 `a === b && a === undefined` 였는데 그건 ①∧②의 동어반복이었다(적대 리뷰 F8).
+  //   지금은 값이 무엇이든 **둘이 같기만 하면** 잡는다 — 계약의 핵심은 '구별 가능'이다.
   const same = [];
   for (const g of SCOPED) {
     let a, b;
-    try { a = await failing[g]('dev'); } catch (e) { a = 'throw'; }
-    try { b = await empty[g]('dev'); } catch (e) { b = 'throw'; }
-    if (a === b && a === undefined) same.push(g);
+    try { a = await failing[g]('dev'); } catch (e) { a = `throw:${e.message}`; }
+    try { b = await empty[g]('dev'); } catch (e) { b = `throw:${e.message}`; }
+    const sa = a === undefined ? 'undefined' : JSON.stringify(a);
+    const sb = b === undefined ? 'undefined' : JSON.stringify(b);
+    if (sa === sb) same.push(`${g}(둘 다 ${sa})`);
   }
   ok(same.length === 0,
-    '★실패와 빈 값이 같은 값으로 뭉개지지 않는다',
-    same.length ? same.join(' · ') : '전부 구별됨');
+    '★실패와 빈 값이 서로 다른 값이다 (구별 가능해야 소비자가 나눠 처리한다)',
+    same.length ? same.slice(0, 5).join(' · ') : `${SCOPED.length}종 전부 구별됨`);
 
   // ── ④ `lastOk`(= HA 의 `last_seen`)는 **조회가 성공한 모든 경로**에서 갱신돼야 한다 ──
   //
@@ -134,6 +140,38 @@ function mkClient(getImpl) {
     try { await c._get('dev', ['b', 'vs', '0']); } catch (e) {}
     ok(c._stat('dev').lastOk === keep,
       '★조회 실패는 lastOk 를 건드리지 않는다 (경과가 커져야 HA 가 사망을 안다)');
+  }
+
+  // ── ⑤ `lastOk` 는 24시간 요약을 **넘어 살아남아야** 한다 (적대 리뷰 F1) ──
+  //
+  // 이 값의 존재 이유는 "기기가 죽은 뒤 얼마나 지났는가"를 HA 가 아는 것이다. 그런데 요약
+  // 타이머가 통계를 통째로 지우면서 **lastOk 까지 없애고** 있었다 → 죽은 기기의 마지막 수신
+  // 시각이 하루마다 리셋돼 HA 가 사망을 판정할 수 없었다. 카운터만 리셋해야 한다.
+  {
+    const c = Object.create(LocalApplianceClient.prototype);
+    c.log = mkLog();
+    c._stats = new Map();
+    c._labelOf = () => '테스트';
+    const st = c._stat('dev');
+    st.ok = 10; st.fail = 3; st.outages = 2; st.longestMs = 5000; st.cloud = 1; st.cmdFail = 1;
+    const mark = Date.parse('2026-08-05T01:00:00.000Z');
+    st.lastOk = mark;
+
+    // 요약 타이머 본체를 실제로 한 번 돌린다(setInterval 콜백을 즉시 실행).
+    let tick = null;
+    c._summaryTimer = null;
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = (fn) => { tick = fn; return { unref() {} }; };
+    try { c._startDailySummary(); } finally { global.setTimeout = realSetTimeout; }
+    ok(typeof tick === 'function', '요약 타이머를 잡았다(계측 전제)');
+    if (typeof tick === 'function') tick();
+
+    const after = c._stat('dev');
+    ok(after.lastOk === mark,
+      '★24시간 요약이 lastOk 를 보존한다 (죽은 기기의 마지막 수신 시각이 사라지면 안 된다)',
+      `${after.lastOk === mark ? '보존' : `${mark} → ${after.lastOk}`}`);
+    ok(after.ok === 0 && after.fail === 0 && after.outages === 0,
+      '★요약은 카운터만 리셋한다', `ok=${after.ok} fail=${after.fail} outages=${after.outages}`);
   }
 
   console.log(`\n${fail === 0 ? '✅ 전부 통과' : `❌ 실패 ${fail}건`} (통과 ${pass})`);

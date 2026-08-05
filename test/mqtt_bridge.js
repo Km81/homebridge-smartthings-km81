@@ -539,6 +539,59 @@ setTimeout(() => {
   }
 }, 50);
 
+// ── 2026-08-05: 소비자 최종단의 null 의미론 (적대 리뷰 F1·F2) ────────────────
+//
+// 공급자(getter)에서 "실패=undefined / 빈 값=null" 을 통일했는데, **발행 함수가 null 을
+// 'OFF'·0 으로 접으면** 그 계약이 마지막 한 걸음에서 무너진다. 특히 `remote_control` 은
+// "OFF = HA 명령이 기기에 안 먹는다"는 진단값이라 빈 값이 **거짓 진단**이 된다.
+{
+  console.log('\n[소비자 null 의미론]');
+  const log = mkLog();
+  const b = new MqttBridge(log, CFG, '2.14.7');
+  withFakeMqtt(created => {
+    b.start();
+    const c = created[0];
+    c.emit('connect');
+    b.registerSmartAc({ slug: 'na', label: '에어컨', setChar: async () => {},
+      hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true,
+      hasMonitor: true, hasLastSeen: true });
+    b.registerLaundry({ slug: 'nl', label: '건조기', kind: 'dryer',
+      hasProgress: true, hasEnergy: true, hasDetail: true, hasLastSeen: true });
+
+    const stOf = (slug) => JSON.parse(c.published.filter(p => p.topic === `km81/appliance/${slug}/state`).pop().payload);
+
+    // 먼저 값을 채워 둔다(그래야 '지워지는지'를 잴 수 있다).
+    b.publishSmartAcSensors('na', { autoclean_running: true, alarm_ok: true, light: true, sound: true });
+    b.publishLaundryState('nl', { state: 'running', remainingMin: 50,
+      remote_control: true, wrinkle_prevent: true, alarm_ok: true });
+    const seeded = { ...stOf('na'), ...stOf('nl') };
+    ok(seeded.autoclean_running === 'ON' && seeded.remote_control === 'ON' && seeded.remaining_min === 50,
+      '초기값이 실렸다(계측 전제)');
+
+    // 이제 **빈 값(null)** 을 흘린다 — 'OFF'/0 이 아니라 키가 사라져야 한다.
+    b.publishSmartAcSensors('na', { autoclean_running: null, alarm_ok: null, light: null, sound: null });
+    b.publishLaundryState('nl', { remote_control: null, wrinkle_prevent: null,
+      alarm_ok: null, remainingMin: null });
+    const a = stOf('na'), l = stOf('nl');
+    const bad = [];
+    for (const [obj, k] of [[a, 'autoclean_running'], [a, 'alarm_ok'], [a, 'light'], [a, 'sound'],
+                            [l, 'remote_control'], [l, 'wrinkle_prevent'], [l, 'alarm_ok']]) {
+      if (k in obj) bad.push(`${k}=${obj[k]}`);
+    }
+    ok(bad.length === 0,
+      "★빈 값(null)을 'OFF' 로 접지 않는다 — 키를 지워 HA 가 unknown 으로 읽게 한다",
+      bad.join(' · ') || '7종 전부 삭제');
+    ok(!('remaining_min' in l),
+      '★빈 값 남은시간을 0 으로 만들지 않는다 (Number(null)===0 — "없음과 0은 다르다")',
+      'remaining_min' in l ? `실제 ${l.remaining_min}` : '삭제됨');
+
+    // 건조기 alarm_ok discovery — 발행만 되고 엔티티가 없던 것(구김방지와 같은 부류).
+    const uids = c.published.filter(p => /\/config$/.test(p.topic) && p.payload !== '')
+      .map(p => JSON.parse(p.payload).unique_id);
+    ok(uids.includes('km81_nl_alarm_ok'), '★건조기 alarm_ok 도 discovery 가 있다');
+  });
+}
+
 // ── 2026-08-05: last_seen(마지막 수신) 계약 ──────────────────────────────────
 //
 // 왜: 브리지 availability 는 브리지 생사만 알려 줘서 HA 가 "값이 안 바뀐 것"과 "기기가 죽은
@@ -556,8 +609,9 @@ setTimeout(() => {
       .map(p => JSON.parse(p.payload)).find(x => x.unique_id === uid);
 
     b.registerSmartAc({ slug: 'ac1', label: '에어컨', setChar: async () => {},
-      hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true, hasMonitor: true });
-    b.registerLaundry({ slug: 'w1', label: '세탁기', kind: 'washer', hasDetail: false });
+      hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true,
+      hasMonitor: true, hasLastSeen: true });
+    b.registerLaundry({ slug: 'w1', label: '세탁기', kind: 'washer', hasDetail: false, hasLastSeen: true });
     b.registerWaterPurifier({ slug: 'wp1', label: '정수기' });
 
     for (const [slug, who] of [['ac1', '에어컨'], ['w1', '세탁기'], ['wp1', '정수기']]) {
@@ -590,9 +644,26 @@ setTimeout(() => {
     // 폴러가 없는 에어컨은 last_seen 도 유령이다 → 등록하지 않고 회수한다.
     const n0 = c.published.length;
     b.registerSmartAc({ slug: 'ac2', label: '클라우드 에어컨', setChar: async () => {},
-      hasWindFree: false, hasAutoClean: false, hasLight: false, hasSound: false, hasMonitor: false });
+      hasWindFree: false, hasAutoClean: false, hasLight: false, hasSound: false,
+      hasMonitor: false, hasLastSeen: false });
     const ls = c.published.slice(n0).find(p => p.topic.endsWith('/km81_ac2/last_seen/config'));
     ok(ls && ls.payload === '', '★폴러 없으면 last_seen 도 회수된다(채워질 수 없는 값)');
+
+    // ★★클라우드 폴백이 켜진 구성 — 폴러는 돌지만 last_seen 은 **거짓말이 된다**:
+    //   세탁물은 클라우드 캐시 응답에도 갱신돼 죽은 기기가 영원히 신선해 보이고,
+    //   에어컨은 폴백 성공이 lastOk 를 안 올려 살아 있는 기기를 죽었다고 보고한다.
+    const n1 = c.published.length;
+    b.registerSmartAc({ slug: 'ac3', label: '폴백 에어컨', setChar: async () => {},
+      hasWindFree: true, hasAutoClean: true, hasLight: true, hasSound: true,
+      hasMonitor: true, hasLastSeen: false });
+    b.registerLaundry({ slug: 'w3', label: '폴백 세탁기', kind: 'washer', hasDetail: false, hasLastSeen: false });
+    const fb = ['km81_ac3', 'km81_w3'].map(x =>
+      c.published.slice(n1).find(p => p.topic.endsWith(`/${x}/last_seen/config`)));
+    ok(fb.every(x => x && x.payload === ''),
+      '★★폴백 구성에서는 last_seen 을 등록하지 않고 회수한다(양방향으로 거짓말이 된다)');
+    // 폴백 에어컨도 모니터링 센서 자체는 그대로 나온다(폴러가 돌기 때문).
+    const ac3 = c.published.slice(n1).filter(p => p.topic.includes('km81_ac3/') && p.payload !== '');
+    ok(ac3.length > 5, '폴백 에어컨의 다른 센서는 정상 등록된다', `${ac3.length}종`);
   });
 }
 
