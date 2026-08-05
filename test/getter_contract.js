@@ -105,6 +105,37 @@ function mkClient(getImpl) {
     '★실패와 빈 값이 같은 값으로 뭉개지지 않는다',
     same.length ? same.join(' · ') : '전부 구별됨');
 
+  // ── ④ `lastOk`(= HA 의 `last_seen`)는 **조회가 성공한 모든 경로**에서 갱신돼야 한다 ──
+  //
+  // ⚠️실사고: `_withFallback` 안에만 넣었더니 **에어컨 경로가 통째로 빠졌다**(에어컨 getter 는
+  //   `_get` 을 직접 부른다). 배포 후 브로커 실측에서 에어컨 `last_seen` 만 비어 있는 것으로
+  //   드러났다 — 테스트가 없었으면 "넣었다"고 믿은 채 지나갔다.
+  {
+    const c = Object.create(LocalApplianceClient.prototype);
+    c.log = mkLog();
+    c._stats = new Map();
+    c._cache = new Map();
+    c._dev = () => ({ host: '1.2.3.4', port: 0, localPort: 0 });
+    c._serialize = (id, fn) => fn();
+    c._ensureIdentity = async () => {};
+    c._learnPort = () => {};
+    c._rpc = async () => ({ ok: true, code: 69, data: { x: 1 }, port: 49152 });   // 69 = CoAP 2.05
+
+    const before = c._stat('dev').lastOk;
+    await c._get('dev', ['a', 'vs', '0']);
+    const after = c._stat('dev').lastOk;
+    ok(before === 0 && after > 0,
+      '★`_get` 성공이 lastOk 를 갱신한다 (에어컨 계열 getter 가 타는 경로)',
+      `${before} → ${after}`);
+
+    // 실패는 갱신하지 않는다 — 마지막 성공 시각이 남아야 경과가 커진다.
+    c._rpc = async () => { throw new Error('timeout'); };
+    const keep = c._stat('dev').lastOk;
+    try { await c._get('dev', ['b', 'vs', '0']); } catch (e) {}
+    ok(c._stat('dev').lastOk === keep,
+      '★조회 실패는 lastOk 를 건드리지 않는다 (경과가 커져야 HA 가 사망을 안다)');
+  }
+
   console.log(`\n${fail === 0 ? '✅ 전부 통과' : `❌ 실패 ${fail}건`} (통과 ${pass})`);
   process.exit(fail === 0 ? 0 : 1);
 })();
