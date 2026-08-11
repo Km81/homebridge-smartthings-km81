@@ -538,23 +538,47 @@ function makeLegacyFast(calls, opts = {}) {
   return o;
 }
 
+// hb_watch 감시 어휘 — 로그 문구가 실패/복구 어휘에 걸리면 허위 경보 또는 가짜 복구가 된다.
+// (정본은 NAS `hb_watch.sh`. 여기 사본은 오프라인 회귀용이며 2026-08-11 실물 추출과 대조했다.)
+const HBW_ALARM = ['폴링 실패', '상태 조회 실패', '상태 폴링 오류', '연결 실패', '폴링 중 오류',
+  '상태 조회 오류', '사실상 클라우드로 동작 중', '제어되지 않습니다', '기기 오프라인'];
+const HBW_RECOVER = ['복구', '연결됨', '로컬 복귀', '수신 복귀', '기기 접속됨', '폴링 회복됨', '기기 온라인 복귀'];
+function vocabHits(s) {
+  return [...HBW_ALARM, ...HBW_RECOVER].filter(w => s.includes(w));
+}
+
 async function legacyConfirmTriesExhausted() {
   console.log('LegacyAC #21 (v2.14.9) 확인 한도 도달 — 중단 로그에 계수·마지막 값');
   const calls = [];
   const o = makeLegacyFast(calls, { mode: false });   // 자동건조 1단계만
-  let fetches = 0;
-  o.getCachedState = async () => { fetches += 1; return o.deviceState; };
+  const fetchArgs = [];
+  o.getCachedState = async (force, maxAgeMs, forceFresh) => {
+    fetchArgs.push({ force, maxAgeMs, forceFresh });
+    return o.deviceState;
+  };
   o.deviceState.Operation.power = 'Off';
   o._schedulePowerOnResends();
   await sleep(1200);
+  const fetches = fetchArgs.length;
   const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
   check('중단 로그가 남는다', !!stop, JSON.stringify(calls));
   check('상한만큼 강제 조회했다 (3회)', fetches === 3, `fetches=${fetches}`);
+  // ★v2.14.10 — 이 계약이 없으면 `getCachedState(true)`(forceFresh 누락)로 되돌려도 전 스위트가
+  //   초록이다(적대 리뷰 실증). 그 경우 진행 중 폴링에 합류해 명령 이전 스냅샷을 "성공"으로
+  //   세고, 30초 캐시에 걸리면 같은 값을 상한만큼 재독한다 — v1.8.21 원사고의 부활.
+  check('강제 조회 계약: force=true', fetchArgs.every(a => a.force === true), JSON.stringify(fetchArgs));
+  check('강제 조회 계약: forceFresh=true (폴링 합류·공유창 금지)',
+    fetchArgs.length > 0 && fetchArgs.every(a => a.forceFresh === true), JSON.stringify(fetchArgs));
+  check('강제 조회 계약: maxAgeMs=0 (클라이언트 캐시 서빙 금지)',
+    fetchArgs.every(a => !a.maxAgeMs), JSON.stringify(fetchArgs));
   check('원인이 확인 한도로 찍힌다', !!stop && /확인 한도 도달: 3회/.test(stop[1]), stop && stop[1]);
   check('조회 성공 3·실패 0', !!stop && /상태 조회 성공 3·실패 0/.test(stop[1]), stop && stop[1]);
   check('마지막 전원값을 남긴다', !!stop && /마지막 전원값 Off/.test(stop[1]), stop && stop[1]);
   check('남은 단계 표기 유지', !!stop && /남은 단계: 자동건조/.test(stop[1]), stop && stop[1]);
   check('명령은 나가지 않았다', !calls.some(c => c[0] === 'send'), JSON.stringify(calls));
+  // ★어휘 계약: 이 줄은 원샷 사건이라 복구 짝이 없다 → 실패 어휘가 섞이면 영구 오경보가 된다
+  check('감시 어휘 비충돌', !!stop && vocabHits(stop[1]).length === 0,
+    stop && JSON.stringify(vocabHits(stop[1])));
 }
 
 async function legacyConfirmFetchFailures() {
@@ -645,12 +669,92 @@ async function smartAbortLog() {
   o.log.info = (m) => calls.push(['info', m]);
   o._state.power = false;
   o._schedulePowerOnResends('dev', { mode: 'dryClean', autoClean: true, displayName: 'AC' });
-  await sleep(3600);
+  await sleep(4500);
   const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
   check('중단 로그가 남는다(예전엔 침묵)', !!stop, JSON.stringify(calls));
   check('남은 단계를 적는다', !!stop && /남은 단계: 모드\(dryClean\), 자동건조/.test(stop[1]), stop && stop[1]);
+  // ★v2.14.10 — 회수가 하드코딩이면 재확인 경로를 지워도 "1회"라고 거짓말한다
+  check('재확인 횟수가 실제 값(1회)', !!stop && /재확인 1회/.test(stop[1]), stop && stop[1]);
   check('명령은 나가지 않았다',
     !calls.some(c => c[0] === 'setMode' || c[0] === 'setAutoClean'), JSON.stringify(calls));
+  check('감시 어휘 비충돌', !!stop && vocabHits(stop[1]).length === 0,
+    stop && JSON.stringify(vocabHits(stop[1])));
+}
+
+async function legacyBudgetResetPerStep() {
+  console.log('LegacyAC #27 (v2.14.10) 시간 예산도 단계마다 새로 센다');
+  const calls = [];
+  const o = makeLegacyFast(calls);          // 모드 + 자동건조 = 2단계
+  o._powerOnConfirmMaxTries = 100;          // 횟수로는 안 끊기게
+  o._powerOnConfirmBudgetMs = 250;          // 단계당은 통과, 체인 누적이면 소진
+  o._powerOnResendStepMs = 300;
+  let fetches = 0;
+  o.deviceState.Operation.power = 'Off';
+  o.getCachedState = async () => {
+    fetches += 1;
+    if (fetches === 2 || fetches === 4) o.deviceState.Operation.power = 'On';
+    return o.deviceState;
+  };
+  o.sendCommand = async (ep, data) => {
+    calls.push(['send', ep, JSON.stringify(data)]);
+    o.deviceState.Operation.power = 'Off';
+  };
+  o._schedulePowerOnResends();
+  await sleep(1800);
+  const sends = calls.filter(c => c[0] === 'send');
+  // 예산이 체인 누적이면 2단계 진입 시 이미 초과라 즉시 중단한다(#24는 횟수 축만 재서 못 잡았다)
+  check('두 단계 모두 전송(시간 축도 단계별)', sends.length === 2, JSON.stringify(calls));
+  check('시간 초과 중단이 없다',
+    !calls.some(c => c[0] === 'info' && /대기 시간 초과/.test(c[1])), JSON.stringify(calls));
+  if (o._refreshTimer) clearTimeout(o._refreshTimer);
+}
+
+async function smartStaleOffRecovers() {
+  console.log('SmartAC #28 (v2.14.10) stale off → 1초 재확인 → 체인 진행');
+  const calls = [];
+  const o = makeSmart(calls);
+  o.log.info = (m) => calls.push(['info', m]);
+  o._state.power = false;                                // 폴링이 늦게 쓴 stale off
+  setTimeout(() => { o._state.power = true; }, 2500);    // 재확인 시점 전에 보정
+  o._schedulePowerOnResends('dev', { mode: 'dryClean', autoClean: true, displayName: 'AC' });
+  await sleep(6000);
+  // 재확인 블록이 사라지면 첫 판정에서 즉시 중단해 아무 명령도 안 나간다(#26만으로는 못 잡았다)
+  check('재확인 뒤 체인이 진행됐다', calls.some(c => c[0] === 'setMode'), JSON.stringify(calls));
+  check('중단 로그 없음',
+    !calls.some(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1])), JSON.stringify(calls));
+}
+
+async function legacyLatePowerOnLog() {
+  console.log('LegacyAC #29 (v2.14.10) 포기 뒤 켜짐이 보이면 지연 시간을 남긴다');
+  const calls = [];
+  const o = makeLegacyFast(calls, { mode: false });
+  o.deviceState.Operation.power = 'Off';
+  o.getCachedState = async () => o.deviceState;
+  o._schedulePowerOnResends();
+  await sleep(700);                       // 3회 소진 후 중단
+  check('중단됨', calls.some(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1])), JSON.stringify(calls));
+  check('아직 지연 로그 없음',
+    !calls.some(c => c[0] === 'info' && /켜짐을 보고했습니다/.test(c[1])), JSON.stringify(calls));
+  // 폴링이 뒤늦게 On 을 관측하는 상황을 실제 경로(getCachedState 성공)로 재현
+  const LegacyAC = require(path.join(REPO, 'lib/accessories/LegacyAC.js'));
+  o.getCachedState = LegacyAC.prototype.getCachedState.bind(o);
+  o.client = { getDeviceStatus: async () => ({ Devices: [{ Operation: { power: 'On' }, Mode: { modes: ['Dry'], options: [] } }] }), lastStatusTs: Date.now() };
+  o.deviceIndex = 0;
+  o.cacheDuration = 0;
+  o.stateRequestPromise = null;
+  o._dumpState = () => {};
+  o._warnUnsupportedMode = () => {};
+  await o.getCachedState(true, 0, true);
+  const late = calls.find(c => c[0] === 'info' && /켜짐을 보고했습니다/.test(c[1]));
+  check('지연 로그가 남는다', !!late, JSON.stringify(calls.filter(c => c[0] === 'info')));
+  check('초 단위 수치를 담는다', !!late && /\d+초 만에/.test(late[1]), late && late[1]);
+  check('감시 어휘 비충돌', !!late && vocabHits(late[1]).length === 0,
+    late && JSON.stringify(vocabHits(late[1])));
+  // 한 번만 — 다음 조회에서 또 찍히면 로그가 불어난다
+  const before = calls.filter(c => c[0] === 'info' && /켜짐을 보고했습니다/.test(c[1])).length;
+  await o.getCachedState(true, 0, true);
+  const after = calls.filter(c => c[0] === 'info' && /켜짐을 보고했습니다/.test(c[1])).length;
+  check('반복 발화하지 않는다', before === 1 && after === 1, `before=${before} after=${after}`);
 }
 
 (async () => {
@@ -682,6 +786,10 @@ async function smartAbortLog() {
   await legacyConfirmResetPerStep();
   await legacyConfirmEarlyExit();
   await smartAbortLog();
+  // v2.14.10 — 적대 리뷰가 실증한 구멍 3종
+  await legacyBudgetResetPerStep();
+  await smartStaleOffRecovers();
+  await legacyLatePowerOnLog();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
   process.exit(failures === 0 ? 0 : 1);
 })();
