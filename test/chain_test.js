@@ -525,6 +525,134 @@ async function smartOffRetry() {
   check('ON 의도가 재시도 취소(전송 0)', !calls2.some(c => c[0] === 'setPower'), JSON.stringify(calls2));
 }
 
+// ---------- v2.14.9: 전원 확인 재시도 상한 + 진단 로그 ----------
+// 2026-08-11 침실 실측 — 후속 체인이 4회(≈9초) 확인 후 중단했는데, 로그가 '기기 전원 Off 확인'
+// 한 줄뿐이라 "기기가 늦게 켜진 것"인지 "조회가 실패해 옛 값이 남은 것"인지 가를 수 없었다.
+function makeLegacyFast(calls, opts = {}) {
+  const o = makeLegacy(calls, opts);
+  o._onGuardMs = 100;
+  o._powerOnResendStepMs = 100;
+  o._powerOnConfirmMaxTries = 3;
+  o._powerOnConfirmGapMs = 50;
+  o._powerOnConfirmBudgetMs = 5000;
+  return o;
+}
+
+async function legacyConfirmTriesExhausted() {
+  console.log('LegacyAC #21 (v2.14.9) 확인 한도 도달 — 중단 로그에 계수·마지막 값');
+  const calls = [];
+  const o = makeLegacyFast(calls, { mode: false });   // 자동건조 1단계만
+  let fetches = 0;
+  o.getCachedState = async () => { fetches += 1; return o.deviceState; };
+  o.deviceState.Operation.power = 'Off';
+  o._schedulePowerOnResends();
+  await sleep(1200);
+  const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
+  check('중단 로그가 남는다', !!stop, JSON.stringify(calls));
+  check('상한만큼 강제 조회했다 (3회)', fetches === 3, `fetches=${fetches}`);
+  check('원인이 확인 한도로 찍힌다', !!stop && /확인 한도 도달: 3회/.test(stop[1]), stop && stop[1]);
+  check('조회 성공 3·실패 0', !!stop && /상태 조회 성공 3·실패 0/.test(stop[1]), stop && stop[1]);
+  check('마지막 전원값을 남긴다', !!stop && /마지막 전원값 Off/.test(stop[1]), stop && stop[1]);
+  check('남은 단계 표기 유지', !!stop && /남은 단계: 자동건조/.test(stop[1]), stop && stop[1]);
+  check('명령은 나가지 않았다', !calls.some(c => c[0] === 'send'), JSON.stringify(calls));
+}
+
+async function legacyConfirmFetchFailures() {
+  console.log('LegacyAC #22 (v2.14.9) 조회 실패를 성공과 구분해 센다');
+  const calls = [];
+  const o = makeLegacyFast(calls, { mode: false });
+  o.getCachedState = async () => { throw new Error('timeout'); };
+  o.deviceState.Operation.power = 'Off';
+  o._schedulePowerOnResends();
+  await sleep(1200);
+  const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
+  check('조회가 전부 실패해도 중단 로그는 남는다', !!stop, JSON.stringify(calls));
+  // ★핵심: 예전에는 .catch(()=>{})로 삼켜 성공과 실패가 같아 보였다
+  check('성공 0·실패 3으로 갈린다', !!stop && /상태 조회 성공 0·실패 3/.test(stop[1]), stop && stop[1]);
+  check('조회 실패가 체인을 멈춰 세우지 않는다(끝까지 재시도)',
+    !!stop && /확인 한도 도달: 3회/.test(stop[1]), stop && stop[1]);
+}
+
+async function legacyConfirmBudget() {
+  console.log('LegacyAC #23 (v2.14.9) 조회가 느리면 횟수 전에 시간 상한이 끊는다');
+  const calls = [];
+  const o = makeLegacyFast(calls, { mode: false });
+  o._powerOnConfirmMaxTries = 100;     // 횟수로는 안 끊기게
+  o._powerOnConfirmBudgetMs = 400;
+  o.getCachedState = async () => { await sleep(150); return o.deviceState; };
+  o.deviceState.Operation.power = 'Off';
+  o._schedulePowerOnResends();
+  await sleep(1600);
+  const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
+  check('중단 로그가 남는다', !!stop, JSON.stringify(calls));
+  check('원인이 대기 시간 초과', !!stop && /대기 시간 초과/.test(stop[1]), stop && stop[1]);
+  const m = stop && stop[1].match(/초과: (\d+)회/);
+  check('횟수 상한(100)에 한참 못 미쳐 끊겼다', !!m && Number(m[1]) < 20, m && m[1]);
+}
+
+async function legacyConfirmResetPerStep() {
+  console.log('LegacyAC #24 (v2.14.9) 확인 예산은 단계마다 새로 센다');
+  const calls = [];
+  const o = makeLegacyFast(calls);     // 모드 + 자동건조 = 2단계
+  let fetches = 0;
+  o.deviceState.Operation.power = 'Off';
+  o.getCachedState = async () => {
+    fetches += 1;
+    if (fetches === 2 || fetches === 4) o.deviceState.Operation.power = 'On';  // 각 단계 2회째에 켜짐
+    return o.deviceState;
+  };
+  o.sendCommand = async (ep, data) => {
+    calls.push(['send', ep, JSON.stringify(data)]);
+    o.deviceState.Operation.power = 'Off';   // 다음 단계도 재시도를 거치게 만든다
+  };
+  o._schedulePowerOnResends();
+  await sleep(1600);
+  const sends = calls.filter(c => c[0] === 'send');
+  // 예산이 체인 전체 누적이라면 2단계에서 남은 1회로는 못 버텨 중단된다(= sends 1건)
+  check('두 단계 모두 전송됐다', sends.length === 2, JSON.stringify(calls));
+  check('2단계가 자동건조', sends[1] && sends[1][2].includes('Autoclean_On'), sends[1] && sends[1][2]);
+  check('중단 로그 없음', !calls.some(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1])), JSON.stringify(calls));
+  if (o._refreshTimer) clearTimeout(o._refreshTimer);
+}
+
+async function legacyConfirmEarlyExit() {
+  console.log('LegacyAC #25 (v2.14.9) 켜짐이 확인되면 남은 횟수를 기다리지 않는다');
+  const calls = [];
+  const o = makeLegacyFast(calls, { mode: false });
+  o._powerOnConfirmMaxTries = 50;      // 다 쓰면 한참 걸릴 값
+  o.deviceState.Operation.power = 'Off';
+  let fetches = 0;
+  o.getCachedState = async () => {
+    fetches += 1;
+    if (fetches === 1) o.deviceState.Operation.power = 'On';
+    return o.deviceState;
+  };
+  const t0 = Date.now();
+  o.sendCommand = async (ep, data) => { calls.push(['send', ep, JSON.stringify(data), Date.now() - t0]); };
+  o._schedulePowerOnResends();
+  await sleep(900);
+  const sends = calls.filter(c => c[0] === 'send');
+  check('자동건조가 전송됐다', sends.length === 1, JSON.stringify(calls));
+  check('조회 1회 만에 진행', fetches === 1, `fetches=${fetches}`);
+  check('즉시 진행(500ms 이내)', sends[0] && sends[0][3] < 500, sends[0] && String(sends[0][3]));
+  if (o._refreshTimer) clearTimeout(o._refreshTimer);
+}
+
+async function smartAbortLog() {
+  console.log('SmartAC #26 (v2.14.9) 조용한 취소 대신 중단 로그를 남긴다');
+  const calls = [];
+  const o = makeSmart(calls);
+  o.log.info = (m) => calls.push(['info', m]);
+  o._state.power = false;
+  o._schedulePowerOnResends('dev', { mode: 'dryClean', autoClean: true, displayName: 'AC' });
+  await sleep(3600);
+  const stop = calls.find(c => c[0] === 'info' && /후속 재전송 중단/.test(c[1]));
+  check('중단 로그가 남는다(예전엔 침묵)', !!stop, JSON.stringify(calls));
+  check('남은 단계를 적는다', !!stop && /남은 단계: 모드\(dryClean\), 자동건조/.test(stop[1]), stop && stop[1]);
+  check('명령은 나가지 않았다',
+    !calls.some(c => c[0] === 'setMode' || c[0] === 'setAutoClean'), JSON.stringify(calls));
+}
+
 (async () => {
   // run sequentially to keep timing clean
   await smartHappy();
@@ -547,6 +675,13 @@ async function smartOffRetry() {
   await clientMaxAgeCache();
   await clientWaiterYield();
   await smartOffRetry();
+  // v2.14.9 — 전원 확인 재시도 상한·진단 로그
+  await legacyConfirmTriesExhausted();
+  await legacyConfirmFetchFailures();
+  await legacyConfirmBudget();
+  await legacyConfirmResetPerStep();
+  await legacyConfirmEarlyExit();
+  await smartAbortLog();
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
   process.exit(failures === 0 ? 0 : 1);
 })();
