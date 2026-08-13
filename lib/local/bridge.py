@@ -48,6 +48,7 @@ _registry_lock = threading.Lock()
 #   그래서 5.xx(기기 내부 오류)는 즉시, 4.xx 는 연속 N회에서만 세션을 버린다.
 _coap_fail = {}                 # "host:port" → 연속 CoAP 오류 횟수(성공하면 0)
 COAP_FAIL_DROP_AFTER = 5
+COAP_NOT_FOUND = 132            # 4.04 — (4 << 5) | 4
 
 
 def emit(obj):
@@ -311,7 +312,12 @@ def drop_session(host, port):
     # 프로브 루프에 영영 도달하지 못했다 — **처음부터 동작한 적 없는 수정**이었다.
     # 세션이 끊겼다는 건 그 포트에 대한 신뢰가 깨졌다는 뜻이므로 여기서 버리는 게 맞다.
     _resolved_ports.pop(host, None)
+    # ★v2.14.12 — 연속 CoAP 오류 카운터도 여기서 지운다. v2.14.11 은 호출부 한 곳에서만
+    #   지워서, **예외 경로로 세션이 바뀌어도 카운터가 이월**됐다(적대 리뷰가 하네스로 실증:
+    #   새 세션의 첫 오류가 coapStreak 2). 그러면 '4.xx 연속 5회' 쿨다운 보호가 한 번의
+    #   타임아웃에 퇴화한다. 세션을 버리는 곳이 곧 '연속'이 끊기는 곳이다.
     with _registry_lock:
+        _coap_fail.pop(k, None)
         lock = _session_locks.setdefault(k, threading.Lock())
     with lock:
         s = _sessions.pop(k, None)
@@ -364,17 +370,21 @@ def handle(req, cert, key):
             if not (64 <= code <= 95):   # 2.00~2.31 이외는 실패
                 # ★v2.14.11 — 여기서 세션을 안 버리면 죽은 세션을 영원히 재사용한다(위 주석 참조).
                 k = "%s:%d" % (host, port)
-                with _registry_lock:
-                    streak = _coap_fail.get(k, 0) + 1
-                    _coap_fail[k] = streak
+                streak = 0
                 dropped = False
-                if (code >> 5) == 5 or streak >= COAP_FAIL_DROP_AFTER:
-                    drop_session(host, port)
+                # ⚠️4.04(리소스 없음)는 기기의 **확정 답**이지 세션 이상이 아니다. JS 는 이미 4.04 를
+                #   실패 계정에서 빼고 있고(notfound_not_failure.js 가 강제) 여기만 세면 계약이 어긋난다.
+                #   온도 리소스가 없는 보드는 폴마다 4.04 를 여러 번 만든다 — 세면 임계에 닿아
+                #   **건강한 세션을 주기적으로 끊는다**(적대 리뷰 D3).
+                if code != COAP_NOT_FOUND:
                     with _registry_lock:
-                        _coap_fail.pop(k, None)
-                    dropped = True
-                    log("CoAP 오류 %d회 연속(코드 %d.%02d) — 세션을 버리고 다음 요청에서 재연결"
-                        % (streak, code >> 5, code & 31), "debug")
+                        streak = _coap_fail.get(k, 0) + 1
+                        _coap_fail[k] = streak
+                    if (code >> 5) == 5 or streak >= COAP_FAIL_DROP_AFTER:
+                        drop_session(host, port)   # 카운터 정리는 drop_session 안에서 한다
+                        dropped = True
+                        log("CoAP 오류 %d회 연속(코드 %d.%02d) — 세션을 버리고 다음 요청에서 재연결"
+                            % (streak, code >> 5, code & 31), "debug")
                 return {"id": rid, "ok": False, "code": code,
                         "coapStreak": streak, "sessionDropped": dropped,
                         "error": "CoAP %d.%02d 응답" % (code >> 5, code & 31)}
