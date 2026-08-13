@@ -40,6 +40,15 @@ _sessions = {}
 _session_locks = {}
 _registry_lock = threading.Lock()
 
+# ★v2.14.11 — CoAP 오류 응답(4.xx/5.xx)은 예외가 아니라 반환값이라 drop_session 을 타지
+#   않았다. 그래서 "기기는 응답하는데 세션은 죽은" 상태에 빠지면 session_for 가 캐시된 죽은
+#   세션을 계속 돌려주고, 프로세스 재시작 외에는 빠져나올 길이 없었다.
+#   (2026-08-13 정수기 실사고: ARP 는 REACHABLE 인데 4시간 39분 무통신, 홈브릿지 재기동 8초 만에 복구)
+#   ⚠️즉시 버리면 안 된다 — 4.03 "not able to be processed" 같은 **정상 쿨다운**도 이 분기로 온다.
+#   그래서 5.xx(기기 내부 오류)는 즉시, 4.xx 는 연속 N회에서만 세션을 버린다.
+_coap_fail = {}                 # "host:port" → 연속 CoAP 오류 횟수(성공하면 0)
+COAP_FAIL_DROP_AFTER = 5
+
 
 def emit(obj):
     with _out_lock:
@@ -353,8 +362,24 @@ def handle(req, cert, key):
             # 라이브러리는 4.xx/5.xx를 예외가 아니라 반환값으로 준다. 이걸 성공으로 넘기면
             # 기기가 거부한 '끄기'가 성공으로 보고돼 재시도·폴백이 전부 무력화된다.
             if not (64 <= code <= 95):   # 2.00~2.31 이외는 실패
+                # ★v2.14.11 — 여기서 세션을 안 버리면 죽은 세션을 영원히 재사용한다(위 주석 참조).
+                k = "%s:%d" % (host, port)
+                with _registry_lock:
+                    streak = _coap_fail.get(k, 0) + 1
+                    _coap_fail[k] = streak
+                dropped = False
+                if (code >> 5) == 5 or streak >= COAP_FAIL_DROP_AFTER:
+                    drop_session(host, port)
+                    with _registry_lock:
+                        _coap_fail.pop(k, None)
+                    dropped = True
+                    log("CoAP 오류 %d회 연속(코드 %d.%02d) — 세션을 버리고 다음 요청에서 재연결"
+                        % (streak, code >> 5, code & 31), "debug")
                 return {"id": rid, "ok": False, "code": code,
+                        "coapStreak": streak, "sessionDropped": dropped,
                         "error": "CoAP %d.%02d 응답" % (code >> 5, code & 31)}
+            with _registry_lock:
+                _coap_fail.pop("%s:%d" % (host, port), None)   # 성공 → 연속 카운터 리셋
             return {"id": rid, "ok": True, "code": code, "data": data, "port": port}
         except Exception as e:
             last = e
