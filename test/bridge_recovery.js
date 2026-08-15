@@ -27,6 +27,7 @@ function check(name, cond, extra) {
 
 function makeClient() {
   const o = Object.create(LocalApplianceClient.prototype);
+  o._bridgeRestartsBy = new Map();   // 생성자를 안 거치므로 하네스가 채운다
   o.__calls = [];
   o.log = { warn: m => o.__calls.push(m), info: () => {}, error: () => {}, debug: () => {} };
   o._labelOf = () => '정수기';
@@ -72,10 +73,32 @@ console.log('#3 ★횟수 상한 — 기기가 물리적으로 죽어 있으면 
     o.maybeRestartBridge('d', AFTER);
   }
   check(`상한 ${MAX}회에서 멈춘다`, o.__killed === MAX, `killed=${o.__killed}`);
-  // 로컬이 한 번이라도 성공하면 다음 장애를 다시 구제해야 한다
-  o._noteLocalOk();
+  // 그 기기가 성공하면 다음 장애를 다시 구제해야 한다
+  o._noteLocalOk('d');
   o._lastBridgeRestart = 0;
-  check('로컬 성공 뒤 상한이 리셋된다', o.maybeRestartBridge('d', AFTER) === true && o.__killed === MAX + 1);
+  check('그 기기의 로컬 성공 뒤 상한이 리셋된다',
+    o.maybeRestartBridge('d', AFTER) === true && o.__killed === MAX + 1);
+}
+
+console.log('#3-B ★★상한은 기기별이다 — 정상 기기의 성공이 죽은 기기의 카운터를 지우면 안 된다');
+{
+  // ⛔v2.14.12 실사고: 전역 카운터라 에어컨·건조기의 매 폴 성공이 정수기 카운터를 리셋했고,
+  //   재시작이 4회 도는 내내 로그가 `1/6회째` 였다 = 상한이 사실상 무한.
+  const o = makeClient();
+  for (let i = 0; i < MAX + 2; i++) {
+    o._lastBridgeRestart = 0;
+    o.maybeRestartBridge('dead', AFTER);
+    o._noteLocalOk('alive');               // 다른 기기는 계속 정상
+  }
+  check(`다른 기기 성공은 상한을 못 지운다 (${MAX}회에서 멈춤)`, o.__killed === MAX, `killed=${o.__killed}`);
+  // 로그의 회차 표기도 실제로 올라가야 한다(전역이면 계속 1/6 이었다)
+  check('회차 표기가 증가한다', /2\/\d+회째/.test(o.__calls[1] || ''), o.__calls[1]);
+  check(`마지막이 ${MAX}회째`, new RegExp(MAX + '\/' + MAX + '회째').test(o.__calls[MAX - 1] || ''),
+    o.__calls[MAX - 1]);
+  // 죽은 기기 자신이 살아나면 리셋된다
+  o._noteLocalOk('dead');
+  o._lastBridgeRestart = 0;
+  check('그 기기가 살아나면 리셋', o.maybeRestartBridge('dead', AFTER) === true);
 }
 
 console.log('#4 죽일 대상이 없거나 종료 중이면 무동작 / kill 예외는 삼킨다');
@@ -101,6 +124,9 @@ console.log('#5 ★호출부가 둘 다 연결돼 있다 (v2.14.11 은 정수기
     /client\.maybeRestartBridge\(deviceId, deadStreak, label\)/.test(ATTACH_SRC));
   // 정수기 getter 가 _withFallback 을 안 타는 구조는 그대로다 — 그래서 별도 연결이 필요하다
   check('정수기 연결에 근거 주석이 있다', /안전망 밖/.test(ATTACH_SRC));
+  // ★_noteLocalOk 는 반드시 deviceId 와 함께 불러야 한다 — 인자 없이 부르면 전역 리셋이 된다
+  check('_noteLocalOk 호출부가 deviceId 를 넘긴다',
+    !/this\._noteLocalOk\(\)/.test(LAC_SRC) && /this\._noteLocalOk\(deviceId\)/.test(LAC_SRC));
 }
 
 console.log('#6 bridge.py — CoAP 오류에서도 세션을 버린다');
