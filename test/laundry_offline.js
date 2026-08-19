@@ -92,29 +92,21 @@ console.log('#6 폴 루프에 실제로 연결돼 있다');
     !/(상태 폴링 오류|폴링 실패|연결 실패)[^\n]*_synthOffAnnounced/.test(SRC));
 }
 
-console.log('#7 MQTT 중계 경로도 같은 판정을 쓴다 (v2.14.15 는 홈킷만 고친 반쪽이었다)');
+console.log('#7 MQTT 중계 경로에는 일부러 넣지 않는다 (v2.14.16 실측으로 되돌린 자리)');
 {
   const ATTACH = read('lib/mqtt/attach.js');
   const { buildSyntheticOff } = require(path.join(REPO, 'lib/accessories/Laundry.js'));
-  // 판정이 두 곳에 복제되면 다음에 한쪽만 고친다 — 공용 함수 하나를 쓰는지 못 박는다
-  check('Laundry 가 순수 함수를 export 한다', typeof buildSyntheticOff === 'function');
-  check('attach 가 그것을 import 한다', ATTACH.indexOf('classifyComponent, buildSyntheticOff') !== -1);
-  check('MQTT 폴러가 실패를 감싸 합성 꺼짐을 쓴다',
-    ATTACH.indexOf('buildSyntheticOff({') !== -1 && ATTACH.indexOf('enabled: local,') !== -1);
-  check('만들지 못하면 원래 예외를 다시 던진다(진짜 오류 은폐 금지)',
-    ATTACH.indexOf('if (!off) throw e;') !== -1);
-  check('꺼짐으로 중계하면 running 도 내린다(주기 적응)',
-    ATTACH.indexOf('comps = off;') !== -1 && ATTACH.indexOf('running = false;') !== -1);
-  // 같은 사건을 홈킷 경로가 info 로 알린다 — MQTT 쪽이 또 info 를 찍으면 두 줄이 된다
-  check('MQTT 쪽 안내는 debug 로', ATTACH.indexOf('로컬 응답 없음 — 꺼짐으로 중계합니다') !== -1);
-
+  // 공용 함수 자체는 유지한다 — 나중에 MqttBridge 를 고치고 다시 붙일 때 쓰려고.
+  check('공용 판정 함수는 남아 있다', typeof buildSyntheticOff === 'function');
   const err = Object.assign(new Error('로컬 요청 시간 초과'), { _transient: true });
-  check('enabled=false 면 null',
-    buildSyntheticOff({ err, streak: 99, wasRunning: false, unitCount: 1, enabled: false }) === null);
-  check('enabled=true 면 합성 꺼짐',
-    !!buildSyntheticOff({ err, streak: 99, wasRunning: false, unitCount: 1, enabled: true }));
-  check('운전 중이었으면 여기서도 연속 실패를 요구한다',
-    buildSyntheticOff({ err, streak: 1, wasRunning: true, unitCount: 1, enabled: true }) === null);
+  check('공용 함수는 정상 동작', !!buildSyntheticOff({ err, streak: 99, wasRunning: false, unitCount: 1, enabled: true }));
+  check('운전 중이면 연속 실패 요구', buildSyntheticOff({ err, streak: 1, wasRunning: true, unitCount: 1, enabled: true }) === null);
+
+  // ⛔여기서 발행을 만들면 재기동 직후 payload 가 retained 를 덮어 `last_seen` 이 사라지고,
+  //   두절 센서가 unknown 을 두절로 안 보므로 **죽은 기기가 정상으로 보인다**(2026-08-19 실측).
+  //   MqttBridge 가 재기동 후 last_seen 을 보존하도록 고치기 전에는 다시 넣지 말 것.
+  check('MQTT 폴러는 합성 꺼짐을 쓰지 않는다', ATTACH.indexOf('buildSyntheticOff') === -1);
+  check('되돌린 이유가 코드에 남아 있다', ATTACH.indexOf('두절 감시가 통째로 무력화') !== -1);
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
