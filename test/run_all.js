@@ -53,6 +53,8 @@ const SUITES = [
   { file: 'local_only.js' },
   // v2.14.11 — 세션 사망 자동복구(정수기 4시간 39분 무통신 사고)
   { file: 'bridge_recovery.js' },
+  // v2.14.14 — 로컬 세탁가전 무응답 시 홈킷 옛 값 고착
+  { file: 'laundry_offline.js' },
   //   port_memory — DTLS 포트를 부팅 간 기억. 틀린 포트를 오래 붙들지 않는가.
   { file: 'port_memory.js' },
   //   cold_read   — 콜드 리드를 지난 부팅 값으로 즉답. 시드가 **거짓 동작**을 만들지 않는가.
