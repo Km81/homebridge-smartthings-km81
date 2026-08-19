@@ -60,8 +60,11 @@ console.log('#4 네트워크류가 아닌 실패는 삼키지 않는다');
   check('응답 구조 이상은 통과시킨다(진짜 오류)',
     o._syntheticOffFor(new Error('API 응답에 장치가 없습니다'), 99, false, 1) === null);
   check('토큰 대기(_noToken)는 제외', o._syntheticOffFor(Object.assign(new Error('x'), { _noToken: true }), 99, false, 1) === null);
-  check('_transient 는 제외(전송 계층이 이미 판단)',
-    o._syntheticOffFor(Object.assign(new Error('timeout'), { _transient: true }), 99, false, 1) === null);
+  // ★★v2.14.15 — `_transient` 로 거르면 안 된다. DTLS 클라이언트는 **모든 읽기 실패**에 이 플래그를
+  //   달아서(`e._transient = kind === 'read'`), 제외하면 건조기에서 기능이 통째로 사문이 된다
+  //   (v2.14.14 실측: `off=null transient=true reMatch=true`). 세탁기의 같은 이름과 뜻이 다르다.
+  check('★_transient 가 붙어 있어도 막지 않는다',
+    !!o._syntheticOffFor(Object.assign(new Error('로컬 요청 시간 초과'), { _transient: true }), 99, false, 1));
 }
 
 console.log('#5 구획 수를 마지막으로 본 것과 맞춘다');
