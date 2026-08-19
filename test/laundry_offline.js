@@ -92,5 +92,30 @@ console.log('#6 폴 루프에 실제로 연결돼 있다');
     !/(상태 폴링 오류|폴링 실패|연결 실패)[^\n]*_synthOffAnnounced/.test(SRC));
 }
 
+console.log('#7 MQTT 중계 경로도 같은 판정을 쓴다 (v2.14.15 는 홈킷만 고친 반쪽이었다)');
+{
+  const ATTACH = read('lib/mqtt/attach.js');
+  const { buildSyntheticOff } = require(path.join(REPO, 'lib/accessories/Laundry.js'));
+  // 판정이 두 곳에 복제되면 다음에 한쪽만 고친다 — 공용 함수 하나를 쓰는지 못 박는다
+  check('Laundry 가 순수 함수를 export 한다', typeof buildSyntheticOff === 'function');
+  check('attach 가 그것을 import 한다', ATTACH.indexOf('classifyComponent, buildSyntheticOff') !== -1);
+  check('MQTT 폴러가 실패를 감싸 합성 꺼짐을 쓴다',
+    ATTACH.indexOf('buildSyntheticOff({') !== -1 && ATTACH.indexOf('enabled: local,') !== -1);
+  check('만들지 못하면 원래 예외를 다시 던진다(진짜 오류 은폐 금지)',
+    ATTACH.indexOf('if (!off) throw e;') !== -1);
+  check('꺼짐으로 중계하면 running 도 내린다(주기 적응)',
+    ATTACH.indexOf('comps = off;') !== -1 && ATTACH.indexOf('running = false;') !== -1);
+  // 같은 사건을 홈킷 경로가 info 로 알린다 — MQTT 쪽이 또 info 를 찍으면 두 줄이 된다
+  check('MQTT 쪽 안내는 debug 로', ATTACH.indexOf('로컬 응답 없음 — 꺼짐으로 중계합니다') !== -1);
+
+  const err = Object.assign(new Error('로컬 요청 시간 초과'), { _transient: true });
+  check('enabled=false 면 null',
+    buildSyntheticOff({ err, streak: 99, wasRunning: false, unitCount: 1, enabled: false }) === null);
+  check('enabled=true 면 합성 꺼짐',
+    !!buildSyntheticOff({ err, streak: 99, wasRunning: false, unitCount: 1, enabled: true }));
+  check('운전 중이었으면 여기서도 연속 실패를 요구한다',
+    buildSyntheticOff({ err, streak: 1, wasRunning: true, unitCount: 1, enabled: true }) === null);
+}
+
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
