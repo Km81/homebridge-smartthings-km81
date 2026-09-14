@@ -5,6 +5,7 @@ const SmartThingsClient = require('./lib/api/SmartThingsClient');
 const LocalApplianceClient = require('./lib/api/LocalApplianceClient');
 const OAuthServer = require('./lib/auth/OAuthServer');
 const LegacyAC = require('./lib/accessories/LegacyAC');
+const { isPutAway, PUT_AWAY_MESSAGE } = require('./lib/common/putAway');
 const SmartAC = require('./lib/accessories/SmartAC');
 const Laundry = require('./lib/accessories/Laundry');
 const LegacyLaundryClient = require('./lib/api/LegacyLaundryClient');
@@ -707,6 +708,11 @@ class SmartThingsKM81Platform {
   //     **오래된 액세서리 정리가 통째로 멈춘다**(2026-08-03 에 다룬 그 경로).
   async _setupWaterPurifier(configDevice) {
     const label = configDevice.deviceLabel || '정수기';
+    // ★「임시 연결해제」 — 정수기는 홈킷 타일이 없어 만들 것이 없다. 바로 끊는다.
+    if (isPutAway(configDevice)) {
+      this.log.info(`[${label}] ${PUT_AWAY_MESSAGE}`);
+      return;
+    }
     const host = configDevice.local && configDevice.local.host;
     if (!host) {
       this.log.warn(`[${label}] 기기 IP가 없어 건너뜁니다 — 정수기는 로컬 전용입니다.`);
@@ -957,6 +963,11 @@ class SmartThingsKM81Platform {
   // ★어떤 실패도 홈킷을 막지 않는다 — 중계는 부가 기능이다.
   _attachMqtt(accessory, configDevice, logic) {
     if (!this.mqtt || !this.mqtt.enabled) return;
+    // ★「임시 연결해제」 — 중계를 시작하지 않는다(폴이 없으니 보낼 상태도 없다).
+    //   ⛔단 `_retractMqtt` 는 부르지 않는다: 회수하면 **HA 엔티티가 사라져 자동화가 깨진다.**
+    //   retained discovery 를 그대로 두면 엔티티는 남고, `last_seen` 만 늙는다 —
+    //   전원을 뽑은 기기라면 그게 **거짓이 아니라 사실**이다(HANDOFF: st 미구현 사유의 해소).
+    if (isPutAway(configDevice)) return;
     if (configDevice.mqttExpose === false) {
       this.log.debug?.(`[MQTT] '${accessory.displayName}' 은 설정에서 중계 제외됨`);
       this._retractMqtt(configDevice, configDevice.deviceType, accessory.displayName,

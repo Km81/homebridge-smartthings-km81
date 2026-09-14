@@ -89,6 +89,13 @@
               "required": true,
               "description": "구형 = 2in1 등 SmartThings 이전 모델(직접 통신). 그 외는 SmartThings 기기. 신형과 시스템 에어컨은 설정 항목이 같습니다."
             },
+            "putAway": {
+              "title": "임시 연결해제",
+              "type": "boolean",
+              "default": false,
+              "required": false,
+              "description": "계절용 기기 등 당분간 연결확인이 필요 없는 기기"
+            },
             "name": {
               "title": "[구형 AC] 액세서리 이름 (필수)",
               "type": "string",
@@ -822,6 +829,7 @@
             "functionBody": "return model.devices[arrayIndices[0]] && ['smartAc','systemAc','washer','dryer','waterPurifier'].includes(model.devices[arrayIndices[0]].deviceType);"
           }
         },
+        "devices[].putAway",
         {
           "key": "devices[].pollingInterval",
           "condition": {
