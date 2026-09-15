@@ -5,7 +5,7 @@ const SmartThingsClient = require('./lib/api/SmartThingsClient');
 const LocalApplianceClient = require('./lib/api/LocalApplianceClient');
 const OAuthServer = require('./lib/auth/OAuthServer');
 const LegacyAC = require('./lib/accessories/LegacyAC');
-const { isPutAway, PUT_AWAY_MESSAGE } = require('./lib/common/putAway');
+const { isPutAway, PUT_AWAY_MESSAGE, makePutAwayClient } = require('./lib/common/putAway');
 const SmartAC = require('./lib/accessories/SmartAC');
 const Laundry = require('./lib/accessories/Laundry');
 const LegacyLaundryClient = require('./lib/api/LegacyLaundryClient');
@@ -235,9 +235,11 @@ class SmartThingsKM81Platform {
     //   `_setupWaterPurifier` 안의 "기기 IP가 없어 건너뜁니다" 경고가 **도달 불가 사문**이 된다
     //   (적대 리뷰 M-1). 종류로만 잡고, host 검사는 그 함수에 맡겨 **경고가 실제로 나오게** 한다.
     const purifiers = this.devices.filter(d => d?.deviceType === 'waterPurifier');
+    // ★「임시 연결해제」 기기는 브릿지 기동 대상에서 뺀다(v2.16.1) — 통신하지 않을 기기 때문에
+    //   파이썬 브릿지를 띄우면 그 자체가 통신 준비다. 전부 연결해제면 브릿지를 아예 안 띄운다.
     const localDevices = [
-      ...stDevices.filter(d => d?.transport === 'local' && !d?.local?.token),
-      ...purifiers.filter(d => d?.local?.host),   // host 가 없으면 브릿지를 띄울 이유가 없다
+      ...stDevices.filter(d => d?.transport === 'local' && !d?.local?.token && !isPutAway(d)),
+      ...purifiers.filter(d => d?.local?.host && !isPutAway(d)),   // host 가 없으면 브릿지를 띄울 이유가 없다
     ];
     if (localDevices.length > 0) {
       this.localClient = new LocalApplianceClient(this.log, {
@@ -379,9 +381,18 @@ class SmartThingsKM81Platform {
    * @returns {boolean} 모든 대상 기기의 deviceId를 정했으면 true
    */
   async _resolveLocalDeviceIds(stDevices) {
-    const need = stDevices.filter(d => d && !d.deviceId
+    // ★「임시 연결해제」 기기에는 **기기에게 묻지 않는다**(v2.16.1 — 2.16.0 은 여기서 DTLS 신원 조회를 보냈다).
+    //   지난 부팅의 기록(discovered 캐시 → 캐시 액세서리)으로만 정한다.
+    //   ⛔못 정하면 정리 억제(false)를 돌려준다 — 그 기기의 액세서리를 stale 로 **지우면 안 된다**.
+    let putAwayLost = false;
+    for (const d of stDevices) {
+      if (!d || d.deviceId || !isPutAway(d)) continue;
+      if (d.transport !== 'local' || !d.local?.host || d.local?.token) continue;
+      if (!this._putAwayIdFromRecords(d)) putAwayLost = true;
+    }
+    const need = stDevices.filter(d => d && !d.deviceId && !isPutAway(d)
       && d.transport === 'local' && d.local?.host && !d.local?.token);
-    if (need.length === 0 || !this.localClient) return true;
+    if (need.length === 0 || !this.localClient) return !putAwayLost;
 
     // ★기기마다 20초씩 직렬로 기다리면 안 된다(v2.7.2).
     //   바로 위에서 브릿지 기동에 20초 예산을 둔 이유가 "여기서 오래 붙들리면 무성 유실"인데,
@@ -415,7 +426,7 @@ class SmartThingsKM81Platform {
     }
 
     const unresolved = need.filter((d) => !d.deviceId);
-    if (unresolved.length === 0) return !duplicated;
+    if (unresolved.length === 0) return !duplicated && !putAwayLost;
 
     // ★브릿지가 아직 안 떴을 뿐이면 **다시 시도한다**(v2.7.2).
     //   pip 첫 설치는 최대 180초인데 이 함수는 20초 예산 직후 한 번만 불린다 —
@@ -423,6 +434,38 @@ class SmartThingsKM81Platform {
     //   재시도 경로가 없어 IP만 적은 기기가 첫 부팅에 한 대도 안 붙었고, 로그는
     //   "저절로 전환됩니다"라고 말해 유일한 복구 수단(재시작)까지 막았다.
     this._scheduleLocalIdRetry(unresolved);
+    return false;
+  }
+
+  /**
+   * 「임시 연결해제」 기기의 deviceId 를 **기록으로만** 정한다(v2.16.1). 기기·클라우드 통신 0.
+   * 순서 = ①discovered 캐시(`_probeOne` 과 같은 파일) ②캐시 액세서리(IP 또는 이름이 같은 것 —
+   * `_scheduleLocalIdRetry` 의 3차 소스와 같은 대조). 둘 다 없으면 false.
+   */
+  _putAwayIdFromRecords(d) {
+    const host = String(d.local?.host || '').trim();
+    let cached = null;
+    try { cached = this.localClient ? this.localClient.readDiscovered(host) : null; } catch (_) { cached = null; }
+    if (cached?.deviceId) {
+      d.deviceId = cached.deviceId;
+      if (!d.deviceLabel && cached.name) d.deviceLabel = cached.name;
+      d.__km81LocalId = true;
+      return true;
+    }
+    const target = normalizeKorean(d.deviceLabel || '');
+    const acc = this.accessories.find((a) => {
+      const cd = a.context?.configDevice;
+      if (!a.context?.device?.deviceId) return false;
+      if (host && String(cd?.local?.host || '').trim() === host) return true;
+      return !!target && normalizeKorean(cd?.deviceLabel || '') === target;
+    });
+    if (acc) {
+      d.deviceId = acc.context.device.deviceId;
+      if (!d.deviceLabel && acc.context.device.label) d.deviceLabel = acc.context.device.label;
+      d.__km81LocalId = true;
+      return true;
+    }
+    this.log.info(`[${labelOf(d)}] ${PUT_AWAY_MESSAGE} (기기 기록 없음 — 이번 부팅은 건너뜀)`);
     return false;
   }
 
@@ -966,8 +1009,13 @@ class SmartThingsKM81Platform {
     // ★「임시 연결해제」 — 중계를 시작하지 않는다(폴이 없으니 보낼 상태도 없다).
     //   ⛔단 `_retractMqtt` 는 부르지 않는다: 회수하면 **HA 엔티티가 사라져 자동화가 깨진다.**
     //   retained discovery 를 그대로 두면 엔티티는 남고, `last_seen` 만 늙는다 —
-    //   전원을 뽑은 기기라면 그게 **거짓이 아니라 사실**이다(HANDOFF: st 미구현 사유의 해소).
-    if (isPutAway(configDevice)) return;
+    //   (전원을 뽑았다면 그 늙음이 실제와 맞다 — ⚠️뽑았는지는 플러그인이 모른다, 가정이다.)
+    //   ★토픽 이름(slug)은 **예약만 한다**(v2.16.1) — 안 하면 같은 종류의 다른 기기가 이 기기의
+    //   이름을 가져가 토픽이 바뀌고, HA 에 엔티티가 두 벌 생긴다(mqttSlug 를 안 적은 구성).
+    if (isPutAway(configDevice)) {
+      this._mqttSlug(configDevice, accessory.context?.device?.deviceId);
+      return;
+    }
     if (configDevice.mqttExpose === false) {
       this.log.debug?.(`[MQTT] '${accessory.displayName}' 은 설정에서 중계 제외됨`);
       this._retractMqtt(configDevice, configDevice.deviceType, accessory.displayName,
@@ -1010,6 +1058,9 @@ class SmartThingsKM81Platform {
   // 그래서 하루 한 번 능동적으로 갱신한다. 갱신 때마다 refresh 토큰이 회전하므로 만료되지 않는다.
   //
   // 로컬 기기가 하나도 없으면(=클라우드를 상시 쓰는 구성) 불필요하므로 걸지 않는다.
+  // ⚠️「임시 연결해제」 기기도 **일부러 센다**(v2.16.1 결정). keepalive 는 기기가 아니라 **계정 토큰**을
+  //   살려 두는 호출이다. 계절 내내 빼 두면 refresh 토큰이 만료돼, 봄에 체크를 푸는 순간 폴백이
+  //   재인증을 요구한다. (⚠️이 주석을 메서드 안에 두지 말 것 — audit_local-transport 가 본문 2000자를 잰다.)
   _startCloudKeepalive() {
     if (!this.smartthings) return;
     const localDevs = this.devices.filter(d => d && d.transport === 'local');
@@ -1057,6 +1108,9 @@ class SmartThingsKM81Platform {
   // transport 설정에 따라 이 기기가 쓸 클라이언트를 고른다.
   // 로컬을 요청했는데 브릿지가 못 떴거나 host/port가 없으면 조용히 클라우드로 내린다.
   _clientFor(configDevice, deviceId) {
+    // ★「임시 연결해제」 — 보낼 수단 자체를 주지 않는다(v2.16.1). 로컬 브릿지·8888 클라이언트에
+    //   등록하지 않으므로 `로컬 경로 등록` 로그·일일 요약 타이머도 생기지 않는다. putAway.js 참조.
+    if (isPutAway(configDevice)) return makePutAwayClient();
     if (configDevice.transport !== 'local') return this.smartthings;
     const cfg = configDevice.local || {};
 
