@@ -70,6 +70,9 @@ const SUITES = [
   { file: 'cold_read.js' },
   //   water_purifier — ★홈킷 액세서리가 없는 첫 기기. '틀렸을 때 티가 나는가'를 잰다.
   { file: 'water_purifier.js' },
+  // v2.16.2 — 사망이 계속되는 동안 사망 어휘가 끊기지 않는가(10/2 정수기: 경보 1줄 뒤 4일 침묵 →
+  //           NAS 감시기가 판단을 보류해 재알림 0건). 며칠을 실제 폴러로 돌려 **최장 공백**을 잰다.
+  { file: 'dead_reannounce.js' },
   // v2.6.10 — 첫 부팅(의존성 설치 중) 경로. LocalApplianceClient를 스텁으로 갈아끼우므로
   //           진짜 클라이언트를 쓰는 스위트와 반드시 별도 프로세스여야 한다.
   { file: 'first_boot.js' },
